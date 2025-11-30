@@ -20,6 +20,9 @@ const loginSchema = z.object({
   sessionDuration: z.enum(["1h", "8h", "24h", "7d"]),
 });
 
+// Dummy hash for timing attack prevention (bcrypt hash of "dummy")
+const DUMMY_HASH = "$2b$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -41,21 +44,25 @@ export async function POST(req: Request) {
       where: { email: normalizedEmail },
     });
 
+    // 2. Always perform bcrypt comparison to prevent timing attacks
+    let valid = false;
     if (!user) {
-      // Avoid leaking which emails exist
+      // Perform fake comparison with dummy hash to maintain constant time
+      await bcrypt.compare(password, DUMMY_HASH);
+      // Return invalid credentials
       return NextResponse.json(
         { error: "Invalid credentials" },
         { status: 401 }
       );
-    }
-
-    // 2. Compare password hash
-    const valid = await bcrypt.compare(password, user.passwordHash);
-    if (!valid) {
-      return NextResponse.json(
-        { error: "Invalid credentials" },
-        { status: 401 }
-      );
+    } else {
+      // Compare with actual password hash
+      valid = await bcrypt.compare(password, user.passwordHash);
+      if (!valid) {
+        return NextResponse.json(
+          { error: "Invalid credentials" },
+          { status: 401 }
+        );
+      }
     }
 
     // 3. Compute expiry

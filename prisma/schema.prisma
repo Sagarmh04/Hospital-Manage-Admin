@@ -47,6 +47,9 @@ model SessionLog {
   browser    String?
   os         String?
   deviceType String?
+
+  @@index([sessionId])
+  @@index([userId])
 }
 
 model AuthLog {
@@ -62,4 +65,9 @@ model AuthLog {
   deviceType      String?
   timestamp       DateTime @default(now())
   details         Json?
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([actingSessionId])
+  @@index([action])
 }

@@ -20,9 +20,41 @@ export async function GET(req: Request) {
         },
       });
 
-      // No sessionLog/authLog models available in the Prisma client; just log expired sessions for debugging
+      // Move each to SessionLog and create AuthLog entries
       for (const session of expiredSessions) {
-        console.log(`Expiring session ${session.id} for user ${session.userId}`);
+        // Move to SessionLog
+        await tx.sessionLog.create({
+          data: {
+            sessionId: session.id,
+            userId: session.userId,
+            createdAt: session.createdAt,
+            expiredAt: now,
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+            browser: session.browser,
+            os: session.os,
+            deviceType: session.deviceType,
+          },
+        });
+
+        // Log SESSION_EXPIRED action
+        await tx.authLog.create({
+          data: {
+            userId: session.userId,
+            sessionId: session.id,
+            actingSessionId: null,
+            action: "SESSION_EXPIRED",
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+            browser: session.browser,
+            os: session.os,
+            deviceType: session.deviceType,
+            details: {
+              expiresAt: session.expiresAt.toISOString(),
+              cleanupTime: now.toISOString(),
+            },
+          },
+        });
       }
 
       // Delete all expired sessions

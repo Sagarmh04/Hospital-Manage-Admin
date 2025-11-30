@@ -1,11 +1,12 @@
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { prisma } from "./db";
 
 /**
  * Returns the currently logged-in user or null.
- * Also deletes expired sessions from DB when accessed.
+ * Wrapped in React cache to prevent duplicate queries in the same request.
  */
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async () => {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get("session_id")?.value;
 
@@ -25,7 +26,8 @@ export async function getCurrentUser() {
 
   const now = new Date();
 
-  if (session.revoked || session.expiresAt <= now) {
+  // Check if expired (cron handles logging)
+  if (session.expiresAt <= now) {
     return null;
   }
 
@@ -36,4 +38,4 @@ export async function getCurrentUser() {
   // });
 
   return session.user;
-}
+});
