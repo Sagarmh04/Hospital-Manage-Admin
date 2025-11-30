@@ -26,15 +26,6 @@ export async function getCurrentUser() {
   const now = new Date();
 
   if (session.revoked || session.expiresAt <= now) {
-    // Auto-delete expired / revoked session from DB
-    try {
-      await prisma.session.delete({
-        where: { id: session.id },
-      });
-    } catch {
-      // ignore delete errors; not critical
-    }
-
     return null;
   }
 

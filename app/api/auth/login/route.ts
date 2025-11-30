@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcrypt";
 import { UAParser } from "ua-parser-js";
+import { z } from "zod";
 
 type SessionDuration = "1h" | "8h" | "24h" | "7d";
 
@@ -12,23 +13,32 @@ const DURATION_TO_HOURS: Record<SessionDuration, number> = {
   "7d": 24 * 7,
 };
 
+// Define schema outside the function
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+  sessionDuration: z.enum(["1h", "8h", "24h", "7d"]),
+});
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
-    const sessionDuration = body.sessionDuration as SessionDuration | undefined;
-
-    if (!email || !password || !sessionDuration) {
+    
+    // Parse and validate with Zod
+    const parseResult = loginSchema.safeParse(body);
+    if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Missing email, password, or session duration" },
+        { error: "Invalid input", details: parseResult.error.issues },
         { status: 400 }
       );
     }
 
+    const { email, password, sessionDuration } = parseResult.data;
+    const normalizedEmail = email.trim().toLowerCase();
+
     // 1. Find user
     const user = await prisma.user.findUnique({
-      where: { email },
+      where: { email: normalizedEmail },
     });
 
     if (!user) {

@@ -66,10 +66,7 @@ export async function revokeOtherSessions(userId: string, currentSessionId: stri
 export async function cleanupExpiredSessions() {
   return await prisma.session.deleteMany({
     where: {
-      OR: [
-        { expiresAt: { lt: new Date() } },
-        { revoked: true },
-      ],
+      expiresAt: { lt: new Date() },
     },
   });
 }
