@@ -7,8 +7,6 @@ export async function POST() {
   const sessionId = cookieStore.get("session_id")?.value;
 
   if (sessionId) {
-    // Mark session revoked OR delete it, your choice.
-    // Here I'll delete it to keep table cleaner.
     try {
       await prisma.session.delete({
         where: { id: sessionId },

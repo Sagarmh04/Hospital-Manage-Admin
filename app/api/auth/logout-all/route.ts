@@ -5,10 +5,10 @@ import { getCurrentUser } from "@/lib/auth";
 /**
  * POST /api/auth/logout-all
  * 
- * Kills all sessions for the authenticated user across all devices.
+ * Revokes all sessions for the authenticated user across all devices.
  * Requires valid session_id cookie to verify authorization.
  * 
- * Security: Only the authenticated user can delete their own sessions.
+ * Security: Only the authenticated user can revoke their own sessions.
  */
 export async function POST() {
   try {
@@ -22,16 +22,17 @@ export async function POST() {
       );
     }
 
-    // 2. User is authorized - delete all their sessions
-    const deleteResult = await prisma.session.deleteMany({
+    // 2. User is authorized - revoke all their sessions
+    const updateResult = await prisma.session.updateMany({
       where: { userId: user.id },
+      data: { revoked: true },
     });
 
     // 3. Clear the current session cookie
     const response = NextResponse.json({ 
       success: true,
-      message: `Successfully logged out from ${deleteResult.count} device(s)`,
-      sessionsDeleted: deleteResult.count
+      message: `Successfully logged out from ${updateResult.count} device(s)`,
+      sessionsRevoked: updateResult.count
     });
 
     response.cookies.set({

@@ -11,6 +11,7 @@ model User {
   id            String     @id @default(cuid())
   email         String     @unique
   passwordHash  String
+  role          String     @default("ADMIN")
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -18,7 +19,7 @@ model User {
 }
 
 model Session {
-  id             String   @id @default(cuid())
+  id             String   @id @default(uuid())
   userId         String
   user           User     @relation(fields: [userId], references: [id])
 
@@ -28,5 +29,8 @@ model Session {
 
   ipAddress      String?
   userAgent      String?
+  browser        String?
+  os             String?
+  deviceType     String?
   lastActivityAt DateTime @default(now())
 }

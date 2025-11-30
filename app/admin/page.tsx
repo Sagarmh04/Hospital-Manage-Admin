@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { DevicesSection } from "@/components/DevicesSection";
 
 export default async function AdminDashboardPage() {
   const user = await getCurrentUser();
@@ -81,6 +82,9 @@ export default async function AdminDashboardPage() {
           <p className="text-xs text-slate-500 mt-1">Placeholder data</p>
         </div>
       </section>
+
+      {/* Devices Section */}
+      <DevicesSection />
     </div>
   );
 }

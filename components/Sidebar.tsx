@@ -2,6 +2,7 @@ import Link from "next/link";
 
 const navItems = [
   { label: "Dashboard", href: "/admin" },
+  { label: "Devices", href: "/admin#devices" },
   { label: "Staff & Users", href: "/admin/staff" },
   { label: "Roles & Permissions", href: "/admin/roles" },
   { label: "Patients", href: "/admin/patients" },

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import bcrypt from "bcrypt";
+import { UAParser } from "ua-parser-js";
 
 type SessionDuration = "1h" | "8h" | "24h" | "7d";
 
@@ -63,6 +64,18 @@ export async function POST(req: Request) {
     const forwardedFor = req.headers.get("x-forwarded-for") || "";
     const ipAddress = forwardedFor.split(",")[0]?.trim() || undefined;
 
+    // Parse User-Agent for device information
+    const parser = new UAParser(userAgent);
+    const uaResult = parser.getResult();
+    
+    const browser = uaResult.browser.name 
+      ? `${uaResult.browser.name}${uaResult.browser.version ? ' ' + uaResult.browser.version : ''}`
+      : undefined;
+    const os = uaResult.os.name
+      ? `${uaResult.os.name}${uaResult.os.version ? ' ' + uaResult.os.version : ''}`
+      : undefined;
+    const deviceType = uaResult.device.type || "desktop";
+
     // 4. Create session row
     const session = await prisma.session.create({
       data: {
@@ -70,13 +83,16 @@ export async function POST(req: Request) {
         expiresAt,
         userAgent,
         ipAddress,
+        browser,
+        os,
+        deviceType,
       },
     });
 
     // 5. Set HttpOnly cookie
     const response = NextResponse.json({ success: true });
 
-    response.cookies.set({
+    const cookieOptions: any = {
       name: "session_id",
       value: session.id,
       httpOnly: true,
@@ -84,8 +100,14 @@ export async function POST(req: Request) {
       sameSite: "lax",
       expires: expiresAt,
       path: "/",
-      // domain: "test.hospitalmanage.in", // optional, you can add this in prod if needed
-    });
+    };
+
+    // Only set domain in production
+    if (process.env.NODE_ENV === "production" && process.env.COOKIE_DOMAIN) {
+      cookieOptions.domain = process.env.COOKIE_DOMAIN;
+    }
+
+    response.cookies.set(cookieOptions);
 
     return response;
   } catch (err) {
