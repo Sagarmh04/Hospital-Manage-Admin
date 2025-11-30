@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { cookies } from "next/headers";
 
 /**
  * POST /api/auth/logout-all
@@ -22,17 +23,68 @@ export async function POST() {
       );
     }
 
-    // 2. User is authorized - revoke all their sessions
-    const updateResult = await prisma.session.updateMany({
-      where: { userId: user.id },
-      data: { revoked: true },
+    const cookieStore = await cookies();
+    const currentSessionId = cookieStore.get("session_id")?.value;
+
+    // Get current session for acting device details
+    const actingSession = currentSessionId 
+      ? await prisma.session.findUnique({ where: { id: currentSessionId } })
+      : null;
+
+    // 2. User is authorized - move all sessions to log and delete
+    const sessionsDeleted = await prisma.$transaction(async (tx) => {
+      // Fetch all sessions for user
+      const sessions = await tx.session.findMany({
+        where: { userId: user.id },
+      });
+
+      const now = new Date();
+
+      // Move each session to SessionLog
+      for (const session of sessions) {
+        await tx.sessionLog.create({
+          data: {
+            sessionId: session.id,
+            userId: session.userId,
+            createdAt: session.createdAt,
+            revokedAt: now,
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+            browser: session.browser,
+            os: session.os,
+            deviceType: session.deviceType,
+          },
+        });
+
+        // Log LOGOUT_ALL action for each session
+        await tx.authLog.create({
+          data: {
+            userId: session.userId,
+            sessionId: session.id,
+            actingSessionId: currentSessionId,
+            action: "LOGOUT_ALL",
+            ipAddress: actingSession?.ipAddress,
+            userAgent: actingSession?.userAgent,
+            browser: actingSession?.browser,
+            os: actingSession?.os,
+            deviceType: actingSession?.deviceType,
+          },
+        });
+      }
+
+      // Delete all sessions
+      const deleteResult = await tx.session.deleteMany({
+        where: { userId: user.id },
+      });
+
+      return deleteResult.count;
     });
 
     // 3. Clear the current session cookie
     const response = NextResponse.json({ 
       success: true,
-      message: `Successfully logged out from ${updateResult.count} device(s)`,
-      sessionsRevoked: updateResult.count
+      message: `Successfully logged out from ${sessionsDeleted} device(s)`,
+      sessionsDeleted
     });
 
     response.cookies.set({

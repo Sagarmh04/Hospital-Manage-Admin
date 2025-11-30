@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { cookies } from "next/headers";
 
 export async function DELETE(
   req: Request,
@@ -16,36 +17,87 @@ export async function DELETE(
       );
     }
 
-    const sessionId = params.id;
+    const targetSessionId = params.id;
+    const cookieStore = await cookies();
+    const currentSessionId = cookieStore.get("session_id")?.value;
 
-    // Verify the session belongs to the current user before deleting
-    const session = await prisma.session.findUnique({
-      where: { id: sessionId },
-      select: { userId: true },
-    });
+    // Get current session for acting device details
+    const actingSession = currentSessionId
+      ? await prisma.session.findUnique({ where: { id: currentSessionId } })
+      : null;
 
-    if (!session) {
-      return NextResponse.json(
-        { error: "Session not found" },
-        { status: 404 }
-      );
-    }
+    // Transaction: Move to log and delete
+    await prisma.$transaction(async (tx) => {
+      // Verify the session belongs to the current user
+      const targetSession = await tx.session.findUnique({
+        where: { id: targetSessionId },
+      });
 
-    if (session.userId !== user.id) {
-      return NextResponse.json(
-        { error: "Unauthorized - Cannot delete another user's session" },
-        { status: 403 }
-      );
-    }
+      if (!targetSession) {
+        throw new Error("Session not found");
+      }
 
-    // Delete the session
-    await prisma.session.delete({
-      where: { id: sessionId },
+      if (targetSession.userId !== user.id) {
+        throw new Error("Unauthorized - Cannot delete another user's session");
+      }
+
+      // Move to SessionLog
+      await tx.sessionLog.create({
+        data: {
+          sessionId: targetSession.id,
+          userId: targetSession.userId,
+          createdAt: targetSession.createdAt,
+          revokedAt: new Date(),
+          ipAddress: targetSession.ipAddress,
+          userAgent: targetSession.userAgent,
+          browser: targetSession.browser,
+          os: targetSession.os,
+          deviceType: targetSession.deviceType,
+        },
+      });
+
+      // Log LOGOUT_OTHER action
+      await tx.authLog.create({
+        data: {
+          userId: user.id,
+          sessionId: targetSessionId,
+          actingSessionId: currentSessionId,
+          action: "LOGOUT_OTHER",
+          ipAddress: actingSession?.ipAddress,
+          userAgent: actingSession?.userAgent,
+          browser: actingSession?.browser,
+          os: actingSession?.os,
+          deviceType: actingSession?.deviceType,
+          details: { 
+            targetSessionId,
+            targetDevice: {
+              browser: targetSession.browser,
+              os: targetSession.os,
+              deviceType: targetSession.deviceType,
+            },
+          },
+        },
+      });
+
+      // Delete the session
+      await tx.session.delete({
+        where: { id: targetSessionId },
+      });
     });
 
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("Delete session error:", err);
+    
+    if (err instanceof Error) {
+      if (err.message === "Session not found") {
+        return NextResponse.json({ error: err.message }, { status: 404 });
+      }
+      if (err.message.includes("Unauthorized")) {
+        return NextResponse.json({ error: err.message }, { status: 403 });
+      }
+    }
+    
     return NextResponse.json(
       { error: "Server error" },
       { status: 500 }

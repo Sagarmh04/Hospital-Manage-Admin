@@ -86,17 +86,51 @@ export async function POST(req: Request) {
       : undefined;
     const deviceType = uaResult.device.type || "desktop";
 
-    // 4. Create session row
-    const session = await prisma.session.create({
-      data: {
-        userId: user.id,
-        expiresAt,
-        userAgent,
-        ipAddress,
-        browser,
-        os,
-        deviceType,
-      },
+    // 4. Create session row and log the action
+    const session = await prisma.$transaction(async (tx) => {
+      const newSession = await tx.session.create({
+        data: {
+          userId: user.id,
+          expiresAt,
+          userAgent,
+          ipAddress,
+          browser,
+          os,
+          deviceType,
+        },
+      });
+
+      // Log LOGIN action
+      await tx.authLog.create({
+        data: {
+          userId: user.id,
+          sessionId: newSession.id,
+          action: "LOGIN",
+          ipAddress,
+          userAgent,
+          browser,
+          os,
+          deviceType,
+          details: { email: normalizedEmail, sessionDuration },
+        },
+      });
+
+      // Log SESSION_CREATED action
+      await tx.authLog.create({
+        data: {
+          userId: user.id,
+          sessionId: newSession.id,
+          action: "SESSION_CREATED",
+          ipAddress,
+          userAgent,
+          browser,
+          os,
+          deviceType,
+          details: { expiresAt: expiresAt.toISOString() },
+        },
+      });
+
+      return newSession;
     });
 
     // 5. Set HttpOnly cookie

@@ -8,10 +8,51 @@ export async function POST() {
 
   if (sessionId) {
     try {
-      await prisma.session.delete({
-        where: { id: sessionId },
+      await prisma.$transaction(async (tx) => {
+        // Fetch session details
+        const session = await tx.session.findUnique({
+          where: { id: sessionId },
+        });
+
+        if (!session) return;
+
+        // Move to SessionLog
+        await tx.sessionLog.create({
+          data: {
+            sessionId: session.id,
+            userId: session.userId,
+            createdAt: session.createdAt,
+            revokedAt: new Date(),
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+            browser: session.browser,
+            os: session.os,
+            deviceType: session.deviceType,
+          },
+        });
+
+        // Log LOGOUT_SELF action
+        await tx.authLog.create({
+          data: {
+            userId: session.userId,
+            sessionId: session.id,
+            actingSessionId: session.id,
+            action: "LOGOUT_SELF",
+            ipAddress: session.ipAddress,
+            userAgent: session.userAgent,
+            browser: session.browser,
+            os: session.os,
+            deviceType: session.deviceType,
+          },
+        });
+
+        // Delete session
+        await tx.session.delete({
+          where: { id: sessionId },
+        });
       });
-    } catch {
+    } catch (err) {
+      console.error("Logout transaction error:", err);
       // ignore if it's already gone
     }
   }
