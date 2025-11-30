@@ -1,7 +1,20 @@
 import type { ReactNode } from "react";
 import { AdminSidebar } from "@/components/Sidebar";
+import { getCurrentUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
-export default function AdminLayout({ children }: { children: ReactNode }) {
+export default async function AdminLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const user = await getCurrentUser();
+
+  if (!user) {
+    // No valid session → kick to login
+    redirect("/login");
+  }
+
   return (
     <div className="min-h-screen flex bg-slate-50">
       <AdminSidebar />
@@ -10,9 +23,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
           <h1 className="text-lg font-semibold text-slate-900">
             Admin Panel
           </h1>
-          {/* Placeholder for user menu / logout, etc. */}
-          <div className="text-sm text-slate-600">
-            {/* e.g. "Logged in as Dr. Admin" later */}
+          <div className="text-sm text-slate-600 flex items-center gap-3">
+            <span>Logged in as {user.email}</span>
+            {/* You can add a logout button that calls /api/auth/logout via fetch */}
           </div>
         </header>
         <div className="p-6">{children}</div>
@@ -20,3 +33,4 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     </div>
   );
 }
+
