@@ -2,6 +2,9 @@ import type { ReactNode } from "react";
 import { AdminSidebar } from "@/components/Sidebar";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { LogoutButton } from "@/components/LogoutButton";
+
+
 
 export default async function AdminLayout({
   children,
@@ -25,7 +28,7 @@ export default async function AdminLayout({
           </h1>
           <div className="text-sm text-slate-600 flex items-center gap-3">
             <span>Logged in as {user.email}</span>
-            {/* You can add a logout button that calls /api/auth/logout via fetch */}
+            <LogoutButton />
           </div>
         </header>
         <div className="p-6">{children}</div>
