@@ -31,48 +31,50 @@ export async function POST() {
       ? await prisma.session.findUnique({ where: { id: currentSessionId } })
       : null;
 
-    // 2. User is authorized - move all sessions to log and delete
+    // 2. User is authorized - move all sessions to log and delete using bulk operations
     const sessionsDeleted = await prisma.$transaction(async (tx) => {
       // Fetch all sessions for user
       const sessions = await tx.session.findMany({
         where: { userId: user.id },
       });
 
-      const now = new Date();
-
-      // Move each session to SessionLog
-      for (const session of sessions) {
-        await tx.sessionLog.create({
-          data: {
-            sessionId: session.id,
-            userId: session.userId,
-            createdAt: session.createdAt,
-            revokedAt: now,
-            ipAddress: session.ipAddress,
-            userAgent: session.userAgent,
-            browser: session.browser,
-            os: session.os,
-            deviceType: session.deviceType,
-          },
-        });
-
-        // Log LOGOUT_ALL action for each session
-        await tx.authLog.create({
-          data: {
-            userId: session.userId,
-            sessionId: session.id,
-            actingSessionId: currentSessionId,
-            action: "LOGOUT_ALL",
-            ipAddress: actingSession?.ipAddress,
-            userAgent: actingSession?.userAgent,
-            browser: actingSession?.browser,
-            os: actingSession?.os,
-            deviceType: actingSession?.deviceType,
-          },
-        });
+      if (sessions.length === 0) {
+        return 0;
       }
 
-      // Delete all sessions
+      const now = new Date();
+
+      // Bulk insert into SessionLog
+      await tx.sessionLog.createMany({
+        data: sessions.map((session) => ({
+          sessionId: session.id,
+          userId: session.userId,
+          createdAt: session.createdAt,
+          revokedAt: now,
+          ipAddress: session.ipAddress,
+          userAgent: session.userAgent,
+          browser: session.browser,
+          os: session.os,
+          deviceType: session.deviceType,
+        })),
+      });
+
+      // Bulk insert AuthLog entries for LOGOUT_ALL
+      await tx.authLog.createMany({
+        data: sessions.map((session) => ({
+          userId: session.userId,
+          sessionId: session.id,
+          actingSessionId: currentSessionId,
+          action: "LOGOUT_ALL",
+          ipAddress: actingSession?.ipAddress,
+          userAgent: actingSession?.userAgent,
+          browser: actingSession?.browser,
+          os: actingSession?.os,
+          deviceType: actingSession?.deviceType,
+        })),
+      });
+
+      // Bulk delete all sessions
       const deleteResult = await tx.session.deleteMany({
         where: { userId: user.id },
       });

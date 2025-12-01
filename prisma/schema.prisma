@@ -52,6 +52,8 @@ model SessionLog {
 
   @@index([sessionId])
   @@index([userId])
+  @@index([expiredAt])
+  @@index([revokedAt])
 }
 
 model AuthLog {
