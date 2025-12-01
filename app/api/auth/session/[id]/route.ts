@@ -6,8 +6,9 @@ import { isValidUUID } from "@/lib/validation";
 
 export async function DELETE(
   req: Request,
-  { params }: { params: { id: string } }
+  props: { params: Promise<{ id: string }> }
 ) {
+  const params = await props.params;
   try {
     const user = await getCurrentUser();
 
