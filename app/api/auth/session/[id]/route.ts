@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { cookies } from "next/headers";
+import { isValidUUID } from "@/lib/validation";
 
 export async function DELETE(
   req: Request,
@@ -18,12 +19,24 @@ export async function DELETE(
     }
 
     const targetSessionId = params.id;
+
+    // Validate targetSessionId is a proper UUID
+    if (!isValidUUID(targetSessionId)) {
+      return NextResponse.json(
+        { error: "Invalid session ID" },
+        { status: 400 }
+      );
+    }
+
     const cookieStore = await cookies();
     const currentSessionId = cookieStore.get("session_id")?.value;
 
+    // Validate currentSessionId if present
+    const validCurrentSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
+
     // Get current session for acting device details
-    const actingSession = currentSessionId
-      ? await prisma.session.findUnique({ where: { id: currentSessionId } })
+    const actingSession = validCurrentSessionId
+      ? await prisma.session.findUnique({ where: { id: validCurrentSessionId } })
       : null;
 
     // Transaction: Move to log and delete
@@ -61,7 +74,7 @@ export async function DELETE(
         data: {
           userId: user.id,
           sessionId: targetSessionId,
-          actingSessionId: currentSessionId,
+          actingSessionId: validCurrentSessionId,
           action: "LOGOUT_OTHER",
           ipAddress: actingSession?.ipAddress,
           userAgent: actingSession?.userAgent,

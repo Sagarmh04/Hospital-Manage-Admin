@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { cookies } from "next/headers";
+import { isValidUUID } from "@/lib/validation";
 
 /**
  * POST /api/auth/logout-all
@@ -18,7 +19,7 @@ export async function POST() {
 
     if (!user) {
       return NextResponse.json(
-        { error: "Unauthorized - Please login first" },
+        { error: "Unauthorized" },
         { status: 401 }
       );
     }
@@ -26,9 +27,12 @@ export async function POST() {
     const cookieStore = await cookies();
     const currentSessionId = cookieStore.get("session_id")?.value;
 
+    // Validate currentSessionId if present
+    const validSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
+
     // Get current session for acting device details
-    const actingSession = currentSessionId 
-      ? await prisma.session.findUnique({ where: { id: currentSessionId } })
+    const actingSession = validSessionId
+      ? await prisma.session.findUnique({ where: { id: validSessionId } })
       : null;
 
     // 2. User is authorized - move all sessions to log and delete using bulk operations
@@ -64,7 +68,7 @@ export async function POST() {
         data: sessions.map((session) => ({
           userId: session.userId,
           sessionId: session.id,
-          actingSessionId: currentSessionId,
+          actingSessionId: validSessionId,
           action: "LOGOUT_ALL",
           ipAddress: actingSession?.ipAddress,
           userAgent: actingSession?.userAgent,

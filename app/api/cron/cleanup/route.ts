@@ -2,14 +2,21 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 
 export async function GET(req: Request) {
-  // Check for Vercel Cron Secret to prevent external abuse
-  const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return new NextResponse('Unauthorized', { status: 401 });
-  }
-
   try {
+    // Check for Vercel Cron Secret to prevent external abuse
+    const authHeader = req.headers.get('authorization');
+    const expectedAuth = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
+    
+    if (!expectedAuth || authHeader !== expectedAuth) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const now = new Date();
+    
+    // Validate current time is reasonable (not in past or too far future)
+    if (isNaN(now.getTime())) {
+      return NextResponse.json({ error: "Invalid system time" }, { status: 500 });
+    }
     
     // Find and process expired sessions in transaction with bulk operations
     const result = await prisma.$transaction(async (tx) => {
@@ -66,12 +73,18 @@ export async function GET(req: Request) {
       // 4) Log retention - delete logs older than 180 days
       const cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
 
+      // Validate cutoff is in the past and reasonable
+      if (cutoff >= now || isNaN(cutoff.getTime())) {
+        throw new Error("Invalid retention cutoff date");
+      }
+
       // Delete old SessionLog entries (where expiredAt OR revokedAt is older than cutoff)
+      // This ensures we only delete logs that are definitively old
       const sessionLogsDeleted = await tx.sessionLog.deleteMany({
         where: {
           OR: [
-            { expiredAt: { lt: cutoff } },
-            { revokedAt: { lt: cutoff } },
+            { expiredAt: { not: null, lt: cutoff } },
+            { revokedAt: { not: null, lt: cutoff } },
           ],
         },
       });
@@ -97,7 +110,8 @@ export async function GET(req: Request) {
       success: true 
     });
   } catch (error) {
-    console.error("Cleanup error:", error);
+    // Log error without exposing internal details
+    console.error("Cleanup error:", error instanceof Error ? error.message : "Unknown error");
     return NextResponse.json({ error: "Cleanup failed" }, { status: 500 });
   }
 }

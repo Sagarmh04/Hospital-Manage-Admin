@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import bcrypt from "bcrypt";
 import { UAParser } from "ua-parser-js";
 import { z } from "zod";
+import { sanitizeForLog, extractIpAddress } from "@/lib/validation";
 
 type SessionDuration = "1h" | "8h" | "24h" | "7d";
 
@@ -13,10 +14,10 @@ const DURATION_TO_HOURS: Record<SessionDuration, number> = {
   "7d": 24 * 7,
 };
 
-// Define schema outside the function
+// Define schema with strict validation
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email().max(254),
+  password: z.string().min(1).max(128),
   sessionDuration: z.enum(["1h", "8h", "24h", "7d"]),
 });
 
@@ -31,7 +32,7 @@ export async function POST(req: Request) {
     const parseResult = loginSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Invalid input", details: parseResult.error.issues },
+        { error: "Invalid input" },
         { status: 400 }
       );
     }
@@ -76,20 +77,19 @@ export async function POST(req: Request) {
 
     const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
 
-    // Get request meta (for logs / audits)
-    const userAgent = req.headers.get("user-agent") || undefined;
-    const forwardedFor = req.headers.get("x-forwarded-for") || "";
-    const ipAddress = forwardedFor.split(",")[0]?.trim() || undefined;
+    // Get request meta (for logs / audits) with safe extraction
+    const userAgent = sanitizeForLog(req.headers.get("user-agent"), 500);
+    const ipAddress = extractIpAddress(req.headers);
 
     // Parse User-Agent for device information
-    const parser = new UAParser(userAgent);
+    const parser = new UAParser(userAgent || "");
     const uaResult = parser.getResult();
     
     const browser = uaResult.browser.name 
-      ? `${uaResult.browser.name}${uaResult.browser.version ? ' ' + uaResult.browser.version : ''}`
+      ? sanitizeForLog(`${uaResult.browser.name}${uaResult.browser.version ? ' ' + uaResult.browser.version : ''}`, 100)
       : undefined;
     const os = uaResult.os.name
-      ? `${uaResult.os.name}${uaResult.os.version ? ' ' + uaResult.os.version : ''}`
+      ? sanitizeForLog(`${uaResult.os.name}${uaResult.os.version ? ' ' + uaResult.os.version : ''}`, 100)
       : undefined;
     const deviceType = uaResult.device.type || "desktop";
 
@@ -162,7 +162,8 @@ export async function POST(req: Request) {
 
     return response;
   } catch (err) {
-    console.error("Login error:", err);
+    // Log error without exposing details to client
+    console.error("Login error:", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json(
       { error: "Server error" },
       { status: 500 }

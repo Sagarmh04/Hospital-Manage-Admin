@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { cookies } from "next/headers";
+import { isValidUUID } from "@/lib/validation";
 
 export async function GET() {
   try {
@@ -16,6 +17,9 @@ export async function GET() {
 
     const cookieStore = await cookies();
     const currentSessionId = cookieStore.get("session_id")?.value;
+
+    // Validate currentSessionId if present
+    const validSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
 
     // Get all non-expired sessions for the user
     const sessions = await prisma.session.findMany({
@@ -42,12 +46,13 @@ export async function GET() {
     // Mark which session is the current one
     const sessionsWithCurrent = sessions.map((session) => ({
       ...session,
-      isCurrent: session.id === currentSessionId,
+      isCurrent: session.id === validSessionId,
     }));
 
     return NextResponse.json({ sessions: sessionsWithCurrent });
   } catch (err) {
-    console.error("Get sessions error:", err);
+    // Log error without exposing details
+    console.error("Get sessions error:", err instanceof Error ? err.message : "Unknown error");
     return NextResponse.json(
       { error: "Server error" },
       { status: 500 }
