@@ -36,7 +36,6 @@ export async function GET() {
         browser: true,
         os: true,
         deviceType: true,
-        revoked: true,
       },
     });
 

@@ -11,7 +11,7 @@ export async function GET(req: Request) {
   try {
     const now = new Date();
     
-    // Find and process expired sessions in transaction
+    // Find and process expired sessions in transaction with bulk operations
     const deletedCount = await prisma.$transaction(async (tx) => {
       // Find all expired sessions
       const expiredSessions = await tx.session.findMany({
@@ -20,47 +20,80 @@ export async function GET(req: Request) {
         },
       });
 
-      // Move each to SessionLog and create AuthLog entries
-      for (const session of expiredSessions) {
-        // Move to SessionLog
-        await tx.sessionLog.create({
-          data: {
-            sessionId: session.id,
-            userId: session.userId,
-            createdAt: session.createdAt,
-            expiredAt: now,
-            ipAddress: session.ipAddress,
-            userAgent: session.userAgent,
-            browser: session.browser,
-            os: session.os,
-            deviceType: session.deviceType,
+      if (expiredSessions.length === 0) {
+        // No expired sessions, but still run log retention
+        const cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+        
+        await tx.sessionLog.deleteMany({
+          where: {
+            createdAt: { lt: cutoff },
           },
         });
-
-        // Log SESSION_EXPIRED action
-        await tx.authLog.create({
-          data: {
-            userId: session.userId,
-            sessionId: session.id,
-            actingSessionId: null,
-            action: "SESSION_EXPIRED",
-            ipAddress: session.ipAddress,
-            userAgent: session.userAgent,
-            browser: session.browser,
-            os: session.os,
-            deviceType: session.deviceType,
-            details: {
-              expiresAt: session.expiresAt.toISOString(),
-              cleanupTime: now.toISOString(),
-            },
+        
+        await tx.authLog.deleteMany({
+          where: {
+            timestamp: { lt: cutoff },
           },
         });
+        
+        return 0;
       }
 
-      // Delete all expired sessions
+      // 1) Bulk insert SessionLog entries
+      await tx.sessionLog.createMany({
+        data: expiredSessions.map((s) => ({
+          sessionId: s.id,
+          userId: s.userId,
+          createdAt: s.createdAt,
+          expiredAt: now,
+          revokedAt: null,
+          ipAddress: s.ipAddress,
+          userAgent: s.userAgent,
+          browser: s.browser,
+          os: s.os,
+          deviceType: s.deviceType,
+        })),
+      });
+
+      // 2) Bulk insert AuthLog entries with action SESSION_EXPIRED
+      await tx.authLog.createMany({
+        data: expiredSessions.map((s) => ({
+          userId: s.userId,
+          sessionId: s.id,
+          actingSessionId: null,
+          action: "SESSION_EXPIRED",
+          ipAddress: s.ipAddress,
+          userAgent: s.userAgent,
+          browser: s.browser,
+          os: s.os,
+          deviceType: s.deviceType,
+          timestamp: now,
+          details: {
+            expiresAt: s.expiresAt,
+            cleanupTime: now,
+          },
+        })),
+      });
+
+      // 3) Bulk delete expired sessions
       const deleteResult = await tx.session.deleteMany({
         where: {
-          expiresAt: { lt: now },
+          id: { in: expiredSessions.map((s) => s.id) },
+        },
+      });
+
+      // 4) Log retention (Postgres only) - delete logs older than 180 days
+      const cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+
+      await tx.sessionLog.deleteMany({
+        where: {
+          createdAt: { lt: cutoff },
+        },
+      });
+
+      await tx.authLog.deleteMany({
+        where: {
+          timestamp: { lt: cutoff },
         },
       });
 

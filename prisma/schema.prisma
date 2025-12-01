@@ -25,7 +25,6 @@ model Session {
 
   createdAt DateTime @default(now())
   expiresAt DateTime
-  revoked   Boolean  @default(false)
 
   ipAddress      String?
   userAgent      String?
@@ -33,6 +32,9 @@ model Session {
   os             String?
   deviceType     String?
   lastActivityAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model SessionLog {

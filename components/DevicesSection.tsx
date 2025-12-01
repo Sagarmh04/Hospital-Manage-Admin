@@ -23,7 +23,6 @@ interface Session {
   browser: string | null;
   os: string | null;
   deviceType: string | null;
-  revoked: boolean;
   isCurrent: boolean;
 }
 
@@ -154,7 +153,7 @@ export function DevicesSection() {
     );
   }
 
-  const activeSessions = sessions.filter(s => !s.revoked);
+  const activeSessions = sessions;
 
   return (
     <Card id="devices">

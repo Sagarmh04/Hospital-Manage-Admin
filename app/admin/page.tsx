@@ -10,7 +10,6 @@ export default async function AdminDashboardPage() {
     ? await prisma.session.count({
         where: {
           userId: user.id,
-          revoked: false,
           expiresAt: { gt: new Date() },
         },
       })

@@ -31,11 +31,11 @@ export const getCurrentUser = cache(async () => {
     return null;
   }
 
-  // Optional: update lastActivityAt if you want "last seen" tracking
-  // await prisma.session.update({
-  //   where: { id: session.id },
-  //   data: { lastActivityAt: now },
-  // });
+  // Update lastActivityAt for this session
+  await prisma.session.update({
+    where: { id: session.id },
+    data: { lastActivityAt: now },
+  });
 
   return session.user;
 });
