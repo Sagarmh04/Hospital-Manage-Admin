@@ -17,11 +17,11 @@ function isValidUUID(value: string | undefined): boolean {
 }
 
 /**
- * Edge Runtime middleware for authentication
+ * Edge Runtime proxy for authentication
  * Validates session existence and expiration via database query
  * Compatible with Vercel Edge Runtime
  */
-export async function middleware(req: NextRequest) {
+export default async function proxy(req: NextRequest) {
   const sessionId = req.cookies.get("session_id")?.value;
   const isAdminPage = req.nextUrl.pathname.startsWith("/admin");
 
