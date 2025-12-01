@@ -1,61 +1,65 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { cookies } from "next/headers";
-import { isValidUUID } from "@/lib/validation";
+import { verifySession } from "@/lib/session-verifier";
 
 export async function POST() {
   try {
     const cookieStore = await cookies();
     const sessionId = cookieStore.get("session_id")?.value;
 
-    if (sessionId && isValidUUID(sessionId)) {
-      try {
-        await prisma.$transaction(async (tx) => {
-          // Fetch session details
-          const session = await tx.session.findUnique({
-            where: { id: sessionId },
-          });
+    if (sessionId) {
+      const result = await verifySession(sessionId);
+      
+      if (result.valid) {
+        try {
+          await prisma.$transaction(async (tx) => {
+            // Fetch session details (we already have it from verifySession, but need fresh data)
+            const session = await tx.session.findUnique({
+              where: { id: sessionId },
+            });
 
-          if (!session) return;
+            if (!session) return;
 
-          // Move to SessionLog
-          await tx.sessionLog.create({
-            data: {
-              sessionId: session.id,
-              userId: session.userId,
-              createdAt: session.createdAt,
-              revokedAt: new Date(),
-              ipAddress: session.ipAddress,
-              userAgent: session.userAgent,
-              browser: session.browser,
-              os: session.os,
-              deviceType: session.deviceType,
-            },
-          });
+            // Move to SessionLog
+            await tx.sessionLog.create({
+              data: {
+                sessionId: session.id,
+                userId: session.userId,
+                createdAt: session.createdAt,
+                revokedAt: new Date(),
+                ipAddress: session.ipAddress,
+                userAgent: session.userAgent,
+                browser: session.browser,
+                os: session.os,
+                deviceType: session.deviceType,
+              },
+            });
 
-          // Log LOGOUT_SELF action
-          await tx.authLog.create({
-            data: {
-              userId: session.userId,
-              sessionId: session.id,
-              actingSessionId: session.id,
-              action: "LOGOUT_SELF",
-              ipAddress: session.ipAddress,
-              userAgent: session.userAgent,
-              browser: session.browser,
-              os: session.os,
-              deviceType: session.deviceType,
-            },
-          });
+            // Log LOGOUT_SELF action
+            await tx.authLog.create({
+              data: {
+                userId: session.userId,
+                sessionId: session.id,
+                actingSessionId: session.id,
+                action: "LOGOUT_SELF",
+                ipAddress: session.ipAddress,
+                userAgent: session.userAgent,
+                browser: session.browser,
+                os: session.os,
+                deviceType: session.deviceType,
+              },
+            });
 
-          // Delete session
-          await tx.session.delete({
-            where: { id: sessionId },
+            // Delete session
+            await tx.session.delete({
+              where: { id: sessionId },
+            });
           });
-        });
-      } catch (err) {
-        console.error("Logout transaction error:", err);
-        // ignore if it's already gone
+        } catch (err) {
+          console.error("Logout transaction error:", err);
+          // ignore if it's already gone
+        }
       }
     }
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
+import { verifySession } from "@/lib/session-verifier";
 import { cookies } from "next/headers";
 import { isValidUUID } from "@/lib/validation";
 
@@ -10,14 +10,20 @@ export async function DELETE(
 ) {
   const params = await props.params;
   try {
-    const user = await getCurrentUser();
+    const cookieStore = await cookies();
+    const currentSessionId = cookieStore.get("session_id")?.value;
 
-    if (!user) {
+    const result = await verifySession(currentSessionId);
+
+    if (!result.valid) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
+
+    const user = result.user;
+    const actingSession = result.session;
 
     const targetSessionId = params.id;
 
@@ -28,17 +34,6 @@ export async function DELETE(
         { status: 400 }
       );
     }
-
-    const cookieStore = await cookies();
-    const currentSessionId = cookieStore.get("session_id")?.value;
-
-    // Validate currentSessionId if present
-    const validCurrentSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
-
-    // Get current session for acting device details
-    const actingSession = validCurrentSessionId
-      ? await prisma.session.findUnique({ where: { id: validCurrentSessionId } })
-      : null;
 
     // Transaction: Move to log and delete
     await prisma.$transaction(async (tx) => {
@@ -75,13 +70,13 @@ export async function DELETE(
         data: {
           userId: user.id,
           sessionId: targetSessionId,
-          actingSessionId: validCurrentSessionId,
+          actingSessionId: currentSessionId,
           action: "LOGOUT_OTHER",
-          ipAddress: actingSession?.ipAddress,
-          userAgent: actingSession?.userAgent,
-          browser: actingSession?.browser,
-          os: actingSession?.os,
-          deviceType: actingSession?.deviceType,
+          ipAddress: actingSession.ipAddress,
+          userAgent: actingSession.userAgent,
+          browser: actingSession.browser,
+          os: actingSession.os,
+          deviceType: actingSession.deviceType,
           details: { 
             targetSessionId,
             targetDevice: {

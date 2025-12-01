@@ -1,91 +1,43 @@
-import { getCurrentUser } from "@/lib/auth";
-import { prisma } from "@/lib/db";
-import { DevicesSection } from "@/components/DevicesSection";
+"use client";
 
-export const dynamic = 'force-dynamic';
+import { useState } from "react";
+import { AdminDashboardClient } from "@/components/AdminDashboardClient";
+import { AdminSidebarClient } from "@/components/AdminSidebarClient";
+import { LogoutButton } from "@/components/LogoutButton";
 
-export default async function AdminDashboardPage() {
-  const user = await getCurrentUser();
-  
-  // Get active sessions count for security info
-  const activeSessions = user
-    ? await prisma.session.count({
-        where: {
-          userId: user.id,
-          expiresAt: { gt: new Date() },
-        },
-      })
-    : 0;
+type ViewType = "dashboard" | "devices" | "staff" | "roles" | "patients" | "appointments" | "billing" | "lab" | "integrations" | "settings" | "audit-logs";
+
+export default function AdminDashboardPage() {
+  const [currentView, setCurrentView] = useState<ViewType>("dashboard");
 
   return (
-    <div className="space-y-6">
-      <section>
-        <h2 className="text-xl font-semibold text-slate-900 mb-2">
-          Overview
-        </h2>
-        <p className="text-sm text-slate-600">
-          This is the admin dashboard. Later, you'll see real-time
-          hospital stats here – OPD counts, inpatients, lab workload,
-          billing summaries, and alerts.
-        </p>
-      </section>
+    <div className="min-h-screen flex bg-slate-50">
+      <AdminSidebarClient currentView={currentView} onViewChange={setCurrentView} />
+      
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <header className="h-16 border-b border-slate-200 bg-white px-6 flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-slate-900">
+            {currentView === "dashboard" && "Dashboard"}
+            {currentView === "devices" && "Device Management"}
+            {currentView === "staff" && "Staff & Users"}
+            {currentView === "roles" && "Roles & Permissions"}
+            {currentView === "patients" && "Patients"}
+            {currentView === "appointments" && "Appointments"}
+            {currentView === "billing" && "Billing & Finance"}
+            {currentView === "lab" && "Lab & Reports"}
+            {currentView === "integrations" && "Integrations"}
+            {currentView === "settings" && "Settings"}
+            {currentView === "audit-logs" && "Audit Logs"}
+          </h1>
+          <LogoutButton />
+        </header>
 
-      {/* Security Info Card */}
-      <section className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-        <div className="flex items-start gap-3">
-          <span className="text-2xl">🔒</span>
-          <div className="flex-1">
-            <h3 className="text-sm font-semibold text-blue-900 mb-1">
-              Security Info
-            </h3>
-            <p className="text-sm text-blue-800">
-              You have <strong>{activeSessions}</strong> active session{activeSessions !== 1 ? 's' : ''}.
-              {activeSessions > 1 && (
-                <span className="block mt-1">
-                  Use <strong>&quot;Logout All Devices&quot;</strong> to sign out from all locations.
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        <div className="rounded-xl bg-white border border-slate-200 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-            Today&apos;s OPD
-          </p>
-          <p className="text-2xl font-semibold text-slate-900">0</p>
-          <p className="text-xs text-slate-500 mt-1">Placeholder data</p>
-        </div>
-
-        <div className="rounded-xl bg-white border border-slate-200 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-            Inpatients
-          </p>
-          <p className="text-2xl font-semibold text-slate-900">0</p>
-          <p className="text-xs text-slate-500 mt-1">Placeholder data</p>
-        </div>
-
-        <div className="rounded-xl bg-white border border-slate-200 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-            Pending Lab Reports
-          </p>
-          <p className="text-2xl font-semibold text-slate-900">0</p>
-          <p className="text-xs text-slate-500 mt-1">Placeholder data</p>
-        </div>
-
-        <div className="rounded-xl bg-white border border-slate-200 p-4">
-          <p className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-            Unpaid Bills
-          </p>
-          <p className="text-2xl font-semibold text-slate-900">₹0</p>
-          <p className="text-xs text-slate-500 mt-1">Placeholder data</p>
-        </div>
-      </section>
-
-      {/* Devices Section */}
-      <DevicesSection />
+        {/* Main Content */}
+        <main className="flex-1 p-6 overflow-y-auto">
+          <AdminDashboardClient currentView={currentView} onViewChange={setCurrentView} />
+        </main>
+      </div>
     </div>
   );
 }

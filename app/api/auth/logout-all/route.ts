@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
+import { verifySession } from "@/lib/session-verifier";
 import { cookies } from "next/headers";
-import { isValidUUID } from "@/lib/validation";
 
 /**
  * POST /api/auth/logout-all
@@ -14,26 +13,21 @@ import { isValidUUID } from "@/lib/validation";
  */
 export async function POST() {
   try {
-    // 1. Verify user is authenticated using existing helper
-    const user = await getCurrentUser();
+    const cookieStore = await cookies();
+    const currentSessionId = cookieStore.get("session_id")?.value;
 
-    if (!user) {
+    // 1. Verify user is authenticated using verifySession
+    const result = await verifySession(currentSessionId);
+
+    if (!result.valid) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
-    const cookieStore = await cookies();
-    const currentSessionId = cookieStore.get("session_id")?.value;
-
-    // Validate currentSessionId if present
-    const validSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
-
-    // Get current session for acting device details
-    const actingSession = validSessionId
-      ? await prisma.session.findUnique({ where: { id: validSessionId } })
-      : null;
+    const user = result.user;
+    const actingSession = result.session;
 
     // 2. User is authorized - move all sessions to log and delete using bulk operations
     const sessionsDeleted = await prisma.$transaction(async (tx) => {
@@ -68,13 +62,13 @@ export async function POST() {
         data: sessions.map((session) => ({
           userId: session.userId,
           sessionId: session.id,
-          actingSessionId: validSessionId,
+          actingSessionId: currentSessionId,
           action: "LOGOUT_ALL",
-          ipAddress: actingSession?.ipAddress,
-          userAgent: actingSession?.userAgent,
-          browser: actingSession?.browser,
-          os: actingSession?.os,
-          deviceType: actingSession?.deviceType,
+          ipAddress: actingSession.ipAddress,
+          userAgent: actingSession.userAgent,
+          browser: actingSession.browser,
+          os: actingSession.os,
+          deviceType: actingSession.deviceType,
         })),
       });
 

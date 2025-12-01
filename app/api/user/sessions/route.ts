@@ -1,25 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
+import { verifySession } from "@/lib/session-verifier";
 import { cookies } from "next/headers";
-import { isValidUUID } from "@/lib/validation";
 
 export async function GET() {
   try {
-    const user = await getCurrentUser();
+    const cookieStore = await cookies();
+    const currentSessionId = cookieStore.get("session_id")?.value;
 
-    if (!user) {
+    const result = await verifySession(currentSessionId);
+
+    if (!result.valid) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
-    const cookieStore = await cookies();
-    const currentSessionId = cookieStore.get("session_id")?.value;
-
-    // Validate currentSessionId if present
-    const validSessionId = currentSessionId && isValidUUID(currentSessionId) ? currentSessionId : null;
+    const user = result.user;
+    const validSessionId = currentSessionId;
 
     // Get all non-expired sessions for the user
     const sessions = await prisma.session.findMany({
