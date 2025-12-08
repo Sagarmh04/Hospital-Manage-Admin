@@ -1,0 +1,35 @@
+// prisma/models/permissionGroups.prisma
+
+enum PermissionGroupCode {
+  PATIENT_ACCESS   // Group 1
+  DOCUMENTATION    // Group 2
+  ORDERS           // Group 3
+  MEDICATION       // Group 4
+  APPROVALS        // Group 5
+}
+
+enum PermissionGroupMode {
+  NONE
+  PARTIAL
+  FULL
+  DRAFT_ONLY
+  OWN_NOTES
+  EXECUTE_ONLY
+  EMERGENCY_ONLY
+  LIMITED
+}
+
+enum WorkflowFlagType {
+  BOOLEAN
+  ENUM
+  NUMBER
+}
+
+/// Fixed permission groups with description
+model PermissionGroup {
+  id          Int                 @id @default(autoincrement())
+  code        PermissionGroupCode @unique
+  description String
+
+  designationMappings DesignationPermissionGroup[]
+}

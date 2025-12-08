@@ -1,0 +1,20 @@
+// prisma/models/session.prisma
+
+model Session {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  ipAddress      String?
+  userAgent      String?
+  browser        String?
+  os             String?
+  deviceType     String?
+  lastActivityAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}

@@ -1,0 +1,24 @@
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  phone     String?  @unique
+
+  /// High-level app role (e.g. "SUPER_ADMIN", "HOSPITAL_ADMIN")
+  /// Detailed clinical permissions are handled through assignments & capabilities.
+  role      String   @default("ADMIN")
+
+  status    String   @default("active") // "active" | "suspended" | "deleted"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sessions    Session[]
+  password    UserPassword?
+  assignments UserAssignment[]
+  permissionGroupOverrides UserPermissionGroupOverride[]
+  workflowFlagOverrides   UserWorkflowFlagOverride[]
+  capabilities            UserCapabilities?
+}

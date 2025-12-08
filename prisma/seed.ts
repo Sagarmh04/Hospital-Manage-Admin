@@ -1,60 +1,92 @@
 // prisma/seed.ts
-import { PrismaClient, PermissionGroupCode, WorkflowFlagType } from '@prisma/client';
+
+import { PrismaClient, PermissionGroupCode, PermissionGroupMode, WorkflowFlagType } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  // 1. Departments
+  console.log("🌱 Starting database seed...");
+
+  // ============================================================
+  // 1. Base Departments
+  // ============================================================
   const departments = [
-    { code: 'OPD', name: 'OPD / Clinic' },
-    { code: 'CASUALTY', name: 'Casualty / Emergency' },
-    { code: 'LAB', name: 'Laboratory' },
-    { code: 'PHARMACY', name: 'Pharmacy' },
-    { code: 'IPD', name: 'Inpatient / Wards' },
-    { code: 'ICU', name: 'ICU' },
-    { code: 'OT', name: 'Operation Theatre' },
+    { code: "OPD", name: "Outpatient Department (Clinic)" },
+    { code: "CASUALTY", name: "Casualty / Emergency" },
+    { code: "LAB", name: "Laboratory" },
+    { code: "PHARMACY", name: "Pharmacy" },
+    { code: "RADIOLOGY", name: "Radiology" },
+    { code: "OT", name: "Operation Theatre" },
+    { code: "IPD", name: "Inpatient Department" },
+    { code: "RECEPTION", name: "Reception & Registration" }
   ];
 
   for (const dept of departments) {
     await prisma.department.upsert({
       where: { code: dept.code },
-      update: {},
+      update: { name: dept.name, isActive: true },
       create: dept,
     });
   }
 
-  // 2. Permission Groups
+  console.log("✔ Departments seeded.");
+
+  // ============================================================
+  // 2. Permission Groups (Group A–E)
+  // ============================================================
   const permissionGroups = [
-    { code: PermissionGroupCode.PATIENT_ACCESS, description: 'View patient data' },
-    { code: PermissionGroupCode.DOCUMENTATION, description: 'Clinical documentation' },
-    { code: PermissionGroupCode.ORDERS, description: 'Lab/radiology/nursing orders' },
-    { code: PermissionGroupCode.MEDICATION, description: 'Prescriptions and meds' },
-    { code: PermissionGroupCode.APPROVALS, description: 'Approvals & overrides' },
+    {
+      code: PermissionGroupCode.PATIENT_ACCESS,
+      description: "Access to patient demographics & medical history",
+    },
+    {
+      code: PermissionGroupCode.DOCUMENTATION,
+      description: "Clinical notes, OPD notes, vitals entry",
+    },
+    {
+      code: PermissionGroupCode.ORDERS,
+      description: "Lab orders, radiology orders, procedures",
+    },
+    {
+      code: PermissionGroupCode.MEDICATION,
+      description: "Prescription creation and medication logic",
+    },
+    {
+      code: PermissionGroupCode.APPROVALS,
+      description: "High-level approvals for sensitive actions",
+    },
   ];
 
-  for (const pg of permissionGroups) {
+  for (const group of permissionGroups) {
     await prisma.permissionGroup.upsert({
-      where: { code: pg.code },
+      where: { code: group.code },
       update: {},
-      create: pg,
+      create: group,
     });
   }
 
-  // 3. Workflow Flags (partial list; extend later)
+  console.log("✔ Permission Groups seeded.");
+
+  // ============================================================
+  // 3. Workflow Flags
+  // ============================================================
   const workflowFlags = [
-    { code: 'requires_note_approval', description: 'Notes need approval', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_finalize_note', description: 'Can finalize/lock notes', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'is_opd_bookable', description: 'Can be booked via OPD', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'is_internal_referral_only', description: 'Only internal referrals allowed', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'is_emergency_authorized', description: 'Can act in emergency', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_do_triage', description: 'Can perform casualty triage', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_handle_mlc', description: 'Can init medico-legal case', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_register_patients', description: 'Can create UHID', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_update_demographics', description: 'Can edit patient demographics', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_merge_records', description: 'Can merge duplicate patients', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_soft_delete', description: 'Can soft-delete patient', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_print_records', description: 'Can print/download records', flagType: WorkflowFlagType.BOOLEAN },
-    { code: 'can_break_glass', description: 'Emergency break-glass access', flagType: WorkflowFlagType.BOOLEAN },
+    {
+      code: "canBreakGlass",
+      description: "Emergency override to access any patient file",
+      flagType: WorkflowFlagType.BOOLEAN,
+    },
+    {
+      code: "canEmergencyPrescribe",
+      description: "Doctor can prescribe emergency medicines",
+      flagType: WorkflowFlagType.BOOLEAN,
+    },
+    {
+      code: "canDoTriage",
+      description: "Can perform triage in casualty",
+      flagType: WorkflowFlagType.BOOLEAN,
+    }
   ];
 
   for (const flag of workflowFlags) {
@@ -65,18 +97,17 @@ async function main() {
     });
   }
 
-  // 4. Designations (example subset)
+  console.log("✔ Workflow Flags seeded.");
+
+  // ============================================================
+  // 4. Designations (roles)
+  // ============================================================
   const designations = [
-    { name: 'Senior Consultant', category: 'clinical', description: 'Full override authority' },
-    { name: 'Consultant', category: 'clinical', description: 'Specialist doctor' },
-    { name: 'Resident Doctor', category: 'clinical', description: 'Supervised doctor' },
-    { name: 'Duty Doctor', category: 'clinical', description: 'Emergency doctor (CMO/RMO)' },
-    { name: 'Casualty Doctor', category: 'clinical', description: 'Casualty doctor' },
-    { name: 'OPD Nurse', category: 'nursing', description: 'Nurse in OPD' },
-    { name: 'Casualty Nurse', category: 'nursing', description: 'Nurse in Casualty' },
-    { name: 'Receptionist', category: 'support', description: 'Front desk' },
-    { name: 'OPD Manager', category: 'admin', description: 'Manages OPD operations' },
-    { name: 'OPD Admin', category: 'admin', description: 'Admin for OPD' },
+    { name: "Consultant", category: "clinical", description: "Senior doctor with full privileges" },
+    { name: "Resident", category: "clinical", description: "Junior doctor requiring approvals" },
+    { name: "DutyDoctor", category: "clinical", description: "Doctor assigned to Casualty / ER" },
+    { name: "Nurse", category: "nursing", description: "Nursing staff with execution rights" },
+    { name: "Receptionist", category: "support", description: "Handles registration and bookings" },
   ];
 
   for (const desig of designations) {
@@ -87,12 +118,131 @@ async function main() {
     });
   }
 
-  console.log('Seed completed');
+  console.log("✔ Designations seeded.");
+
+  // ============================================================
+  // 5. Designation Permission Group Mappings
+  // ============================================================
+
+  // Helper: get IDs
+  const consultant = await prisma.designation.findUnique({ where: { name: "Consultant" } });
+  const resident = await prisma.designation.findUnique({ where: { name: "Resident" } });
+  const dutyDoctor = await prisma.designation.findUnique({ where: { name: "DutyDoctor" } });
+  const nurse = await prisma.designation.findUnique({ where: { name: "Nurse" } });
+  const receptionist = await prisma.designation.findUnique({ where: { name: "Receptionist" } });
+
+  const pg = async (code: PermissionGroupCode) =>
+    prisma.permissionGroup.findUnique({ where: { code } }).then((g) => g!.id);
+
+  // Consultant → All Full
+  const consultantMappings = [
+    { group: PermissionGroupCode.PATIENT_ACCESS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.DOCUMENTATION, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.ORDERS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.MEDICATION, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.APPROVALS, mode: PermissionGroupMode.FULL }
+  ];
+
+  // Resident → Partial documentation & no approvals
+  const residentMappings = [
+    { group: PermissionGroupCode.PATIENT_ACCESS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.DOCUMENTATION, mode: PermissionGroupMode.DRAFT_ONLY },
+    { group: PermissionGroupCode.ORDERS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.MEDICATION, mode: PermissionGroupMode.DRAFT_ONLY },
+    { group: PermissionGroupCode.APPROVALS, mode: PermissionGroupMode.NONE }
+  ];
+
+  // Duty Doctor → Emergency permissions
+  const dutyMappings = [
+    { group: PermissionGroupCode.PATIENT_ACCESS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.DOCUMENTATION, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.ORDERS, mode: PermissionGroupMode.FULL },
+    { group: PermissionGroupCode.MEDICATION, mode: PermissionGroupMode.EMERGENCY_ONLY },
+    { group: PermissionGroupCode.APPROVALS, mode: PermissionGroupMode.NONE }
+  ];
+
+  // Nurse → Execute Only
+  const nurseMappings = [
+    { group: PermissionGroupCode.PATIENT_ACCESS, mode: PermissionGroupMode.PARTIAL },
+    { group: PermissionGroupCode.DOCUMENTATION, mode: PermissionGroupMode.OWN_NOTES },
+    { group: PermissionGroupCode.ORDERS, mode: PermissionGroupMode.EXECUTE_ONLY },
+    { group: PermissionGroupCode.MEDICATION, mode: PermissionGroupMode.NONE },
+    { group: PermissionGroupCode.APPROVALS, mode: PermissionGroupMode.NONE }
+  ];
+
+  // Receptionist → Limited access
+  const recMappings = [
+    { group: PermissionGroupCode.PATIENT_ACCESS, mode: PermissionGroupMode.LIMITED },
+    { group: PermissionGroupCode.DOCUMENTATION, mode: PermissionGroupMode.NONE },
+    { group: PermissionGroupCode.ORDERS, mode: PermissionGroupMode.NONE },
+    { group: PermissionGroupCode.MEDICATION, mode: PermissionGroupMode.NONE },
+    { group: PermissionGroupCode.APPROVALS, mode: PermissionGroupMode.NONE }
+  ];
+
+  async function map(designationId: string, arr: any[]) {
+    for (const m of arr) {
+      const groupId = await pg(m.group);
+
+      await prisma.designationPermissionGroup.upsert({
+        where: {
+          designationId_permissionGroupId: {
+            designationId,
+            permissionGroupId: groupId,
+          },
+        },
+        update: { mode: m.mode },
+        create: {
+          designationId,
+          permissionGroupId: groupId,
+          mode: m.mode,
+        },
+      });
+    }
+  }
+
+  await map(consultant!.id, consultantMappings);
+  await map(resident!.id, residentMappings);
+  await map(dutyDoctor!.id, dutyMappings);
+  await map(nurse!.id, nurseMappings);
+  await map(receptionist!.id, recMappings);
+
+  console.log("✔ Designation permission mappings seeded.");
+
+  // ============================================================
+  // 6. Seed Admin User
+  // ============================================================
+
+  const adminEmail = "admin@hospitalmanage.com";
+  const adminPassword = "Admin@123";
+
+  const passwordHash = await bcrypt.hash(adminPassword, 10);
+
+  const adminUser = await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {},
+    create: {
+      email: adminEmail,
+      name: "System Admin",
+      role: "SUPER_ADMIN",
+    },
+  });
+
+  await prisma.userPassword.upsert({
+    where: { userId: adminUser.id },
+    update: { passwordHash },
+    create: {
+      userId: adminUser.id,
+      passwordHash,
+    },
+  });
+
+  console.log("✔ Admin user seeded.");
+  console.log("🌱 SEED COMPLETED SUCCESSFULLY.");
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error("❌ Seed failed", e);
     process.exit(1);
   })
   .finally(async () => {

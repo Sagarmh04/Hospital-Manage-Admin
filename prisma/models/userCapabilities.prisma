@@ -1,0 +1,28 @@
+// prisma/models/userCapabilities.prisma
+
+model UserCapabilities {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id])
+
+  // High-level type flags
+  isDoctor       Boolean @default(false)
+  isNurse        Boolean @default(false)
+  isReceptionist Boolean @default(false)
+
+  // Booking / assignment related
+  isOPDBookable      Boolean @default(false)
+  isCasualtyBookable Boolean @default(false)
+
+  // Operational capabilities
+  canRegisterPatient    Boolean @default(false)
+  canPlaceLabOrder      Boolean @default(false)
+  canApproveLabResult   Boolean @default(false)
+  canDispensePharmacy   Boolean @default(false)
+  canDoTriage           Boolean @default(false)
+
+  // Critical safety flags
+  canBreakGlass         Boolean @default(false)
+  canEmergencyPrescribe Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
+}

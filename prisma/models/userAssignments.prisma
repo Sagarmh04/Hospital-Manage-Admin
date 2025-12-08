@@ -1,0 +1,20 @@
+// prisma/models/userAssignments.prisma
+
+model UserAssignment {
+  id            String      @id @default(uuid())
+  user          User        @relation(fields: [userId], references: [id])
+  userId        String
+
+  department    Department  @relation(fields: [departmentId], references: [id])
+  departmentId  String
+
+  designation   Designation @relation(fields: [designationId], references: [id])
+  designationId String
+
+  isPrimary     Boolean     @default(false)
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([userId, departmentId, designationId])
+}

@@ -1,0 +1,37 @@
+// prisma/models/permissionOverrides.prisma
+
+model UserPermissionGroupOverride {
+  id           String               @id @default(uuid())
+  user         User                 @relation(fields: [userId], references: [id])
+  userId       String
+
+  department   Department?          @relation(fields: [departmentId], references: [id])
+  departmentId String?
+
+  groupCode    PermissionGroupCode
+  modeOverride PermissionGroupMode?
+
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([userId, departmentId, groupCode])
+}
+
+/// Per-user override for WorkflowFlag
+model UserWorkflowFlagOverride {
+  id         String        @id @default(uuid())
+  user       User          @relation(fields: [userId], references: [id])
+  userId     String
+
+  flag       WorkflowFlag  @relation(fields: [flagId], references: [id])
+  flagId     String
+
+  valueBool   Boolean?
+  valueText   String?
+  valueNumber Float?
+
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([userId, flagId])
+}

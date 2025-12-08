@@ -1,0 +1,40 @@
+// prisma/models/logs.prisma
+
+model SessionLog {
+  id         String    @id @default(uuid())
+  sessionId  String
+  userId     String
+  createdAt  DateTime
+  revokedAt  DateTime?
+  expiredAt  DateTime?
+  ipAddress  String?
+  userAgent  String?
+  browser    String?
+  os         String?
+  deviceType String?
+
+  @@index([sessionId])
+  @@index([userId])
+  @@index([expiredAt])
+  @@index([revokedAt])
+}
+
+model AuthLog {
+  id              String   @id @default(uuid())
+  userId          String
+  sessionId       String?
+  actingSessionId String?
+  action          String
+  ipAddress       String?
+  userAgent       String?
+  browser         String?
+  os              String?
+  deviceType      String?
+  timestamp       DateTime @default(now())
+  details         Json?
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([actingSessionId])
+  @@index([action])
+}
