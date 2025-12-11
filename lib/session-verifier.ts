@@ -17,6 +17,7 @@ export interface SessionVerificationSuccess {
   session: {
     id: string;
     userId: string;
+    createdAt: Date;
     expiresAt: Date;
     lastActivityAt: Date;
     ipAddress: string | null;
@@ -27,25 +28,10 @@ export interface SessionVerificationSuccess {
   };
 }
 
-export type VerifySessionResult = SessionVerificationResult | SessionVerificationSuccess;
+export type VerifySessionResult =
+  | SessionVerificationResult
+  | SessionVerificationSuccess;
 
-/**
- * Verify a session by checking:
- * 1. UUID validity
- * 2. Session exists in database
- * 3. Session is not expired
- * 
- * If valid, updates lastActivityAt and returns user data.
- * If invalid or expired, logs SESSION_EXPIRED_CLIENT_VALIDATE and returns invalid.
- * 
- * @param sessionId - The session ID to verify
- * @param ipAddress - Optional IP address for logging
- * @param userAgent - Optional user agent for logging
- * @param browser - Optional browser for logging
- * @param os - Optional OS for logging
- * @param deviceType - Optional device type for logging
- * @returns Verification result with user data if valid
- */
 export async function verifySession(
   sessionId: string | undefined | null,
   metadata?: {
@@ -57,32 +43,39 @@ export async function verifySession(
   }
 ): Promise<VerifySessionResult> {
   try {
-    // Check if sessionId is provided
-    if (!sessionId) {
-      return { valid: false };
-    }
+    if (!sessionId) return { valid: false };
+    if (!isValidUUID(sessionId)) return { valid: false };
 
-    // Validate UUID format
-    if (!isValidUUID(sessionId)) {
-      return { valid: false };
-    }
-
-    // Query session with user
     const session = await prisma.session.findUnique({
       where: { id: sessionId },
-      include: { user: true },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,       // ✔ ADDED
+        expiresAt: true,
+        lastActivityAt: true,
+        ipAddress: true,
+        userAgent: true,
+        browser: true,
+        os: true,
+        deviceType: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
     });
 
-    // Session not found
-    if (!session) {
-      return { valid: false };
-    }
+    if (!session) return { valid: false };
 
     const now = new Date();
 
-    // Check if session is expired
     if (session.expiresAt <= now) {
-      // Log expiration event
       await prisma.authLog.create({
         data: {
           userId: session.userId,
@@ -103,35 +96,30 @@ export async function verifySession(
       return { valid: false };
     }
 
-    // Session is valid - update lastActivityAt
-    const updatedSession = await prisma.session.update({
+    const updated = await prisma.session.update({
       where: { id: session.id },
       data: { lastActivityAt: now },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        lastActivityAt: true,
+        ipAddress: true,
+        userAgent: true,
+        browser: true,
+        os: true,
+        deviceType: true,
+      },
     });
 
     return {
       valid: true,
-      user: {
-        id: session.user.id,
-        email: session.user.email,
-        role: session.user.role,
-        createdAt: session.user.createdAt,
-        updatedAt: session.user.updatedAt,
-      },
-      session: {
-        id: updatedSession.id,
-        userId: updatedSession.userId,
-        expiresAt: updatedSession.expiresAt,
-        lastActivityAt: updatedSession.lastActivityAt,
-        ipAddress: updatedSession.ipAddress,
-        userAgent: updatedSession.userAgent,
-        browser: updatedSession.browser,
-        os: updatedSession.os,
-        deviceType: updatedSession.deviceType,
-      },
+      user: session.user,
+      session: updated,
     };
-  } catch (error) {
-    console.error("verifySession error:", error);
+  } catch (err) {
+    console.error("verifySession error:", err);
     return { valid: false };
   }
 }

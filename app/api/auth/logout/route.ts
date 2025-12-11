@@ -1,3 +1,4 @@
+// FILE: app/api/auth/logout/route.ts
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { cookies } from "next/headers";
@@ -8,64 +9,67 @@ export async function POST() {
     const cookieStore = await cookies();
     const sessionId = cookieStore.get("session_id")?.value;
 
-    if (sessionId) {
-      const result = await verifySession(sessionId);
-      
-      if (result.valid) {
-        try {
-          await prisma.$transaction(async (tx) => {
-            // Fetch session details (we already have it from verifySession, but need fresh data)
-            const session = await tx.session.findUnique({
-              where: { id: sessionId },
-            });
-
-            if (!session) return;
-
-            // Move to SessionLog
-            await tx.sessionLog.create({
-              data: {
-                sessionId: session.id,
-                userId: session.userId,
-                createdAt: session.createdAt,
-                revokedAt: new Date(),
-                ipAddress: session.ipAddress,
-                userAgent: session.userAgent,
-                browser: session.browser,
-                os: session.os,
-                deviceType: session.deviceType,
-              },
-            });
-
-            // Log LOGOUT_SELF action
-            await tx.authLog.create({
-              data: {
-                userId: session.userId,
-                sessionId: session.id,
-                actingSessionId: session.id,
-                action: "LOGOUT_SELF",
-                ipAddress: session.ipAddress,
-                userAgent: session.userAgent,
-                browser: session.browser,
-                os: session.os,
-                deviceType: session.deviceType,
-              },
-            });
-
-            // Delete session
-            await tx.session.delete({
-              where: { id: sessionId },
-            });
-          });
-        } catch (err) {
-          console.error("Logout transaction error:", err);
-          // ignore if it's already gone
-        }
-      }
+    if (!sessionId) {
+      return NextResponse.json({ success: true }); // already logged out
     }
+
+    const result = await verifySession(sessionId);
+
+    if (!result.valid) {
+      // Clear cookie even if invalid
+      const res = NextResponse.json({ success: true });
+      res.cookies.set({
+        name: "session_id",
+        value: "",
+        path: "/",
+        maxAge: 0,
+      });
+      return res;
+    }
+
+    const actingSession = result.session;
+    const user = result.user;
+
+    await prisma.$transaction(async (tx) => {
+      // Move session to SessionLog
+      await tx.sessionLog.create({
+        data: {
+          sessionId: actingSession.id,
+          userId: user.id,
+          createdAt: actingSession.createdAt,
+          revokedAt: new Date(),
+          ipAddress: actingSession.ipAddress,
+          userAgent: actingSession.userAgent,
+          browser: actingSession.browser,
+          os: actingSession.os,
+          deviceType: actingSession.deviceType,
+        },
+      });
+
+      // Log LOGOUT_SELF
+      await tx.authLog.create({
+        data: {
+          userId: user.id,
+          sessionId: actingSession.id,
+          actingSessionId: actingSession.id,
+          action: "LOGOUT_SELF",
+          ipAddress: actingSession.ipAddress,
+          userAgent: actingSession.userAgent,
+          browser: actingSession.browser,
+          os: actingSession.os,
+          deviceType: actingSession.deviceType,
+        },
+      });
+
+      // Delete session
+      await tx.session.delete({
+        where: { id: actingSession.id },
+      });
+    });
 
     const response = NextResponse.json({ success: true });
 
-    // Clear cookie in browser
+    // Clear browser cookie
     response.cookies.set({
       name: "session_id",
       value: "",
@@ -74,10 +78,10 @@ export async function POST() {
     });
 
     return response;
-  } catch (error) {
-    console.error("Logout error:", error);
+  } catch (err) {
+    console.error("Logout error:", err);
     return NextResponse.json(
-      { error: "Logout failed" },
+      { error: "server_error" },
       { status: 500 }
     );
   }

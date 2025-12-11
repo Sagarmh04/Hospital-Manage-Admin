@@ -1,22 +1,66 @@
 generator client {
-  provider = "prisma-client-js"
+  provider   = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+
+datasource db { 
+  provider = "postgresql" 
+  url = env("DATABASE_URL") 
 }
+
+//// ENUMS /////////////////////////////////////////////////////
+
+enum PermissionGroupCode {
+  PATIENT_ACCESS   // Group A
+  DOCUMENTATION    // Group B
+  ORDERS           // Group C
+  MEDICATION       // Group E
+  APPROVALS        // Group F
+}
+
+enum PermissionGroupMode {
+  NONE
+  PARTIAL
+  FULL
+  DRAFT_ONLY
+  OWN_NOTES
+  EXECUTE_ONLY
+  EMERGENCY_ONLY
+  LIMITED
+}
+
+enum WorkflowFlagType {
+  BOOLEAN
+  ENUM
+  NUMBER
+}
+
+//// CORE AUTH / USER //////////////////////////////////////////
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  role         String   @default("ADMIN")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  phone     String?  @unique
 
-  sessions Session[]
+  role      String   @default("ADMIN")
+  status    String   @default("active")
+
+  passwordHash      String
+  passwordChangedAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions                 Session[]
+  assignments              UserAssignment[]
+  permissionGroupOverrides UserPermissionGroupOverride[]
+  workflowFlagOverrides    UserWorkflowFlagOverride[]
+  capabilities             UserCapabilities?
+  otpRequest               OtpRequest?
+  @@index([status])
 }
+
 
 model Session {
   id     String @id @default(uuid())
@@ -74,4 +118,193 @@ model AuthLog {
   @@index([sessionId])
   @@index([actingSessionId])
   @@index([action])
+  @@index([timestamp])
+}
+
+/// One active OTP per user for login flows
+model OtpRequest {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  otpHash    String
+  expiresAt  DateTime
+  attempts   Int      @default(0)
+  lastSentAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+
+//// DEPARTMENTS & DESIGNATIONS /////////////////////////////////
+
+model Department {
+  id        String   @id @default(uuid())
+  code      String   @unique // "OPD", "CASUALTY", "LAB", etc.
+  name      String
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userAssignments              UserAssignment[]
+  userPermissionGroupOverrides UserPermissionGroupOverride[]
+}
+
+model Designation {
+  id          String   @id @default(uuid())
+  name        String   @unique        // "Consultant", "Resident", "Duty Doctor", etc.
+  category    String                 // "clinical" | "nursing" | "support" | "admin"
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  permissionGroups DesignationPermissionGroup[]
+  workflowFlags    DesignationWorkflowFlag[]
+  userAssignments  UserAssignment[]
+}
+
+//// PERMISSION GROUPS & WORKFLOW FLAGS /////////////////////////
+
+/// Fixed permission groups with description
+model PermissionGroup {
+  id          Int                 @id @default(autoincrement())
+  code        PermissionGroupCode @unique
+  description String
+
+  designationMappings DesignationPermissionGroup[]
+}
+
+/// Metadata for each workflow flag
+model WorkflowFlag {
+  id          String           @id @default(uuid())
+  code        String           @unique            // e.g. "canBreakGlass"
+  description String
+  flagType    WorkflowFlagType @default(BOOLEAN)
+  enumValues  String[] // optional list of valid values when type=ENUM
+
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  designationMappings DesignationWorkflowFlag[]
+  userOverrides       UserWorkflowFlagOverride[]
+}
+
+/// Default mapping of Designation -> PermissionGroup (Basic behavior)
+model DesignationPermissionGroup {
+  id                String              @id @default(uuid())
+  designation       Designation         @relation(fields: [designationId], references: [id])
+  designationId     String
+
+  group             PermissionGroup     @relation(fields: [permissionGroupId], references: [id])
+  permissionGroupId Int
+
+  mode              PermissionGroupMode
+
+  @@unique([designationId, permissionGroupId])
+}
+
+/// Default mapping of Designation -> WorkflowFlag (logic layer)
+model DesignationWorkflowFlag {
+  id            String        @id @default(uuid())
+  designation   Designation   @relation(fields: [designationId], references: [id])
+  designationId String
+
+  flag          WorkflowFlag  @relation(fields: [flagId], references: [id])
+  flagId        String
+
+  valueBool     Boolean?
+  valueText     String?
+  valueNumber   Float?
+
+  @@unique([designationId, flagId])
+}
+
+//// USER ASSIGNMENTS & OVERRIDES ///////////////////////////////
+
+model UserAssignment {
+  id            String      @id @default(uuid())
+  user          User        @relation(fields: [userId], references: [id])
+  userId        String
+
+  department    Department  @relation(fields: [departmentId], references: [id])
+  departmentId  String
+
+  designation   Designation @relation(fields: [designationId], references: [id])
+  designationId String
+
+  isPrimary     Boolean     @default(false)
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([userId, departmentId, designationId])
+}
+
+model UserPermissionGroupOverride {
+  id           String               @id @default(uuid())
+  user         User                 @relation(fields: [userId], references: [id])
+  userId       String
+
+  department   Department?          @relation(fields: [departmentId], references: [id])
+  departmentId String?
+
+  groupCode    PermissionGroupCode
+  modeOverride PermissionGroupMode?
+
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([userId, departmentId, groupCode])
+}
+
+/// Per-user override for WorkflowFlag
+model UserWorkflowFlagOverride {
+  id         String        @id @default(uuid())
+  user       User          @relation(fields: [userId], references: [id])
+  userId     String
+
+  flag       WorkflowFlag  @relation(fields: [flagId], references: [id])
+  flagId     String
+
+  valueBool   Boolean?
+  valueText   String?
+  valueNumber Float?
+
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([userId, flagId])
+}
+
+//// FLATTENED CAPABILITIES ////////////////////////////////////
+
+model UserCapabilities {
+  userId String @id
+  user   User   @relation(fields: [userId], references: [id])
+
+  // High-level type flags
+  isDoctor       Boolean @default(false)
+  isNurse        Boolean @default(false)
+  isReceptionist Boolean @default(false)
+
+  // Booking / assignment related
+  isOPDBookable      Boolean @default(false)
+  isCasualtyBookable Boolean @default(false)
+
+  // Operational capabilities
+  canRegisterPatient    Boolean @default(false)
+  canPlaceLabOrder      Boolean @default(false)
+  canApproveLabResult   Boolean @default(false)
+  canDispensePharmacy   Boolean @default(false)
+  canDoTriage           Boolean @default(false)
+
+  // Critical safety flags
+  canBreakGlass         Boolean @default(false)
+  canEmergencyPrescribe Boolean @default(false)
+
+  updatedAt DateTime @updatedAt
 }
