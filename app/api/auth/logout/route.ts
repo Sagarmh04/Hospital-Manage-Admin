@@ -61,6 +61,11 @@ export async function POST() {
         },
       });
 
+      // Revoke any pending OTPs for the user when they log out
+      await tx.otpRequest.deleteMany({
+        where: { userId: user.id },
+      });
+
       // Delete session
       await tx.session.delete({
         where: { id: actingSession.id },

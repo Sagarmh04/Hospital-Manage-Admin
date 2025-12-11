@@ -39,9 +39,10 @@ export async function POST(req: Request) {
     }
 
     const { identifier, password, otp, sessionDuration } = parse.data;
+    const normalized = identifier.trim().toLowerCase();
 
-    const isEmail = identifier.includes("@");
-    const isPhone = /^[0-9]{10}$/.test(identifier);
+    const isEmail = normalized.includes("@");
+    const isPhone = /^[0-9]{10}$/.test(normalized);
 
     if (!isEmail && !isPhone) {
       return NextResponse.json({ error: "invalid_identifier" }, { status: 400 });
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
 
     // 1) Fetch user minimal fields
     const user = await prisma.user.findUnique({
-      where: isEmail ? { email: identifier.toLowerCase().trim() } : { phone: identifier },
+      where: isEmail ? { email: normalized } : { phone: normalized },
       select: { id: true, passwordHash: true, status: true },
     });
 
@@ -104,6 +105,35 @@ export async function POST(req: Request) {
       await prisma.otpRequest.update({
         where: { userId: user.id },
         data: { attempts: { increment: 1 } },
+      });
+
+      // Log invalid OTP attempt with client info for brute-force detection
+      const userAgentRaw = sanitizeForLog(req.headers.get("user-agent"), 500);
+      const ipAddress = extractIpAddress(req.headers);
+      const parser = new UAParser(userAgentRaw || "");
+      const ua = parser.getResult();
+
+      const browser = ua.browser.name
+        ? sanitizeForLog(`${ua.browser.name}${ua.browser.version ? " " + ua.browser.version : ""}`, 100)
+        : undefined;
+
+      const os = ua.os.name
+        ? sanitizeForLog(`${ua.os.name}${ua.os.version ? " " + ua.os.version : ""}`, 100)
+        : undefined;
+
+      const deviceType = ua.device.type || "desktop";
+
+      await prisma.authLog.create({
+        data: {
+          userId: user.id,
+          action: "INVALID_OTP",
+          ipAddress,
+          userAgent: userAgentRaw,
+          browser,
+          os,
+          deviceType,
+          details: { providedOtp: otp },
+        },
       });
 
       return NextResponse.json({ error: "invalid_otp" }, { status: 400 });

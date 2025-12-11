@@ -89,6 +89,11 @@ export async function POST(req: Request) {
     const deletedCount = await prisma.$transaction(async (tx) => {
       let count = 0;
 
+      // Revoke any pending OTPs for the user when performing logout-all
+      await tx.otpRequest.deleteMany({
+        where: { userId: user.id },
+      });
+
       // Delete OTHER sessions first
       for (const session of others) {
         // Move to SessionLog

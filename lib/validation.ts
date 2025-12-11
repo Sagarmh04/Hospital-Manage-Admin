@@ -54,12 +54,18 @@ export function sanitizeForLog(value: string | null | undefined, maxLength: numb
 /**
  * Safely extracts IP address from headers
  */
-export function extractIpAddress(headers: Headers): string | undefined {
+export function extractIpAddress(headers: Headers): string | null {
   const forwardedFor = headers.get("x-forwarded-for");
   if (forwardedFor) {
     const ip = forwardedFor.split(",")[0]?.trim();
-    return ip || undefined;
+    if (typeof ip !== "string") return null;
+    if (ip.length > 45) return null; // IPv6 max length guard
+    return ip || null;
   }
-  const realIp = headers.get("x-real-ip");
-  return realIp?.trim() || undefined;
+
+  const realIpRaw = headers.get("x-real-ip");
+  const realIp = realIpRaw?.trim();
+  if (typeof realIp !== "string") return null;
+  if (realIp.length > 45) return null;
+  return realIp || null;
 }

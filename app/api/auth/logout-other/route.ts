@@ -122,6 +122,10 @@ export async function POST(req: Request) {
         },
       });
 
+      await tx.otpRequest.deleteMany({
+        where: { userId: actingUser.id }
+    });
+
       // Delete session
       await tx.session.delete({
         where: { id: targetSession.id },
