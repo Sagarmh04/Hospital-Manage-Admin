@@ -11,9 +11,6 @@
     "drizzle:studio": "drizzle-kit studio",
     "build": "next build"
   },
-  "prisma": {
-    "seed": "ts-node --project tsconfig.seed.json prisma/seed.ts"
-  },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@neondatabase/serverless": "^1.0.2",
