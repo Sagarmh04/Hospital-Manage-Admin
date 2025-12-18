@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/drizzle";
 import { users } from "@/drizzle/schema";
-import { eq, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import {
   validateEmailOrPhone,
@@ -11,7 +11,6 @@ import {
   extractIpAddress,
   otpSchema,
 } from "@/lib/validation";
-import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { verifyUserOTP } from "@/lib/otp-management";
 import { createSession, logAuthEvent } from "@/lib/session-management";
 import { z } from "zod";
@@ -61,26 +60,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Rate limiting by IP address
-    if (ipAddress) {
-      const rateLimitResult = checkRateLimit(
-        `otp-verify:${ipAddress}`,
-        RATE_LIMITS.OTP_VERIFY
-      );
-
-      if (!rateLimitResult.allowed) {
-        const waitMinutes = Math.ceil(
-          (rateLimitResult.resetAt - Date.now()) / 60000
-        );
-        return NextResponse.json(
-          {
-            error: `Too many verification attempts. Please try again in ${waitMinutes} minutes.`,
-          },
-          { status: 429 }
-        );
-      }
-    }
-
     // Find user by email or phone
     const [user] = await db
       .select()
@@ -119,7 +98,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify OTP
+    // Verify OTP (uses the actual OTP stored in DB, which is "123456" from dev endpoint)
     const otpResult = await verifyUserOTP({
       userId: user.id,
       otp: validatedOtp,
@@ -130,7 +109,7 @@ export async function POST(request: NextRequest) {
       // Log failed attempt
       await logAuthEvent({
         userId: user.id,
-        action: "otp_verify_failed",
+        action: "dev_otp_verify_failed",
         ipAddress,
         userAgent,
         details: {
@@ -158,7 +137,7 @@ export async function POST(request: NextRequest) {
     await logAuthEvent({
       userId: user.id,
       sessionId: session.id,
-      action: "login_success",
+      action: "dev_login_success",
       ipAddress,
       userAgent,
       details: {
@@ -197,7 +176,7 @@ export async function POST(request: NextRequest) {
 
     return response;
   } catch (error) {
-    console.error("[OTP Verify Error]", error);
+    console.error("[Dev OTP Verify Error]", error);
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(

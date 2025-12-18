@@ -1,31 +1,26 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import bcrypt from "bcrypt";
-import { UAParser } from "ua-parser-js";
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/drizzle";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
+import bcrypt from "bcryptjs";
+import {
+  emailSchema,
+  sanitizeIpAddress,
+  sanitizeUserAgent,
+  extractIpAddress,
+} from "@/lib/validation";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { createOtpRequest, generateOTP, canRequestOTP } from "@/lib/otp-management";
+import { logAuthEvent } from "@/lib/session-management";
 import { z } from "zod";
-import crypto from "crypto";
-import { sanitizeForLog, extractIpAddress } from "@/lib/validation";
-
-type RequestBody = {
-  email: string;
-  password: string;
-};
-
-// dummy bcrypt hash used for timing-attack protection when user not found
-const DUMMY_HASH = "$2b$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
-
-// OTP config
-const OTP_MIN = 100000;
-const OTP_MAX_EXCLUSIVE = 1000000; // crypto.randomInt upper bound is exclusive
-const OTP_EXPIRES_MINUTES = 5;
-const BACKEND_COOLDOWN_SECONDS = 30;
-const MAX_OTP_ATTEMPTS = 5;
-const BCRYPT_ROUNDS = 10;
 
 const emailRequestSchema = z.object({
   email: z.string().email().min(3).max(254),
   password: z.string().min(1).max(128),
 });
+
+// Dummy hash for timing attack prevention
+const DUMMY_HASH = "$2a$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
 
 /**
  * Send transactional email via MSG91 Email API v5 (transactional).
@@ -33,10 +28,12 @@ const emailRequestSchema = z.object({
  *  - MSG91_AUTH_KEY
  *  - MSG91_EMAIL_SENDER_EMAIL
  *  - MSG91_EMAIL_SENDER_NAME
- *
- * Returns Response-like object { ok: boolean, status: number, text?: string }
  */
-async function sendEmailViaMsg91(toEmail: string, subject: string, htmlBody: string) {
+async function sendEmailViaMsg91(
+  toEmail: string,
+  subject: string,
+  htmlBody: string
+) {
   const authKey = process.env.MSG91_AUTH_KEY;
   const senderEmail = process.env.MSG91_EMAIL_SENDER_EMAIL;
   const senderName = process.env.MSG91_EMAIL_SENDER_NAME || "";
@@ -66,178 +63,182 @@ async function sendEmailViaMsg91(toEmail: string, subject: string, htmlBody: str
     const text = await res.text().catch(() => "");
     return { ok: res.ok, status: res.status, text };
   } catch (err) {
-    return { ok: false, status: 502, text: (err instanceof Error) ? err.message : "Network error" };
+    return {
+      ok: false,
+      status: 502,
+      text: err instanceof Error ? err.message : "Network error",
+    };
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body: unknown = await req.json();
+    // Extract and sanitize request metadata
+    const ipAddress = sanitizeIpAddress(extractIpAddress(request.headers));
+    const userAgent = sanitizeUserAgent(
+      request.headers.get("user-agent") || undefined
+    );
+
+    // Parse and validate request body
+    const body = await request.json();
     const parse = emailRequestSchema.safeParse(body);
 
     if (!parse.success) {
-      return NextResponse.json({ error: "invalid_input" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid email format" },
+        { status: 400 }
+      );
     }
 
-    const { email, password } = parse.data as RequestBody;
-    const normalizedEmail = email.trim().toLowerCase();
+    const { email, password } = parse.data;
+    const validatedEmail = emailSchema.parse(email);
 
-    // 1) Fetch minimal user fields (id, passwordHash, status)
-    const user = await prisma.user.findUnique({
-      where: { email: normalizedEmail },
-      select: { id: true, passwordHash: true, status: true },
-    });
+    // Rate limiting by IP address
+    if (ipAddress) {
+      const rateLimitResult = checkRateLimit(
+        `otp-request:${ipAddress}`,
+        RATE_LIMITS.OTP_REQUEST
+      );
 
-    // Always perform bcrypt.compare to avoid timing attacks
-    if (!user) {
-      // Compare with dummy hash to normalize timing
-      await bcrypt.compare(password, DUMMY_HASH);
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    // Check status explicitly
-    if (user.status === "suspended") {
-      return NextResponse.json({ error: "account_suspended" }, { status: 403 });
-    }
-    if (user.status === "deleted") {
-      // hide existence
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    // Verify password
-    const passwordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordValid) {
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    // Rate limiting: check existing OTP and lastSentAt
-    const existingOtp = await prisma.otpRequest.findUnique({
-      where: { userId: user.id },
-      select: { lastSentAt: true, expiresAt: true, attempts: true },
-    });
-
-    if (existingOtp) {
-      const now = new Date();
-      const lastSentAt = existingOtp.lastSentAt;
-      const diffSeconds = Math.floor((now.getTime() - new Date(lastSentAt).getTime()) / 1000);
-      if (diffSeconds < BACKEND_COOLDOWN_SECONDS) {
+      if (!rateLimitResult.allowed) {
+        const waitMinutes = Math.ceil(
+          (rateLimitResult.resetAt - Date.now()) / 60000
+        );
         return NextResponse.json(
-          { error: "too_many_requests", retryAfter: BACKEND_COOLDOWN_SECONDS - diffSeconds },
+          {
+            error: `Too many OTP requests. Please try again in ${waitMinutes} minutes.`,
+          },
           { status: 429 }
         );
       }
     }
 
-    // Generate OTP numeric 6-digit between 100000 and 999999
-    const otpNum = crypto.randomInt(OTP_MIN, OTP_MAX_EXCLUSIVE); // [100000, 999999]
-    const otpString = String(otpNum);
+    // Find user by email
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, validatedEmail))
+      .limit(1);
 
-    // Hash OTP with bcrypt (do NOT log the OTP)
-    const otpHash = await bcrypt.hash(otpString, BCRYPT_ROUNDS);
+    // Always perform bcrypt.compare to prevent timing attacks
+    if (!user) {
+      // Compare with dummy hash to normalize timing
+      await bcrypt.compare(password, DUMMY_HASH);
+      return NextResponse.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
+    }
 
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + OTP_EXPIRES_MINUTES * 60 * 1000);
+    // Check if user status is active
+    if (user.status !== "active") {
+      await bcrypt.compare(password, DUMMY_HASH);
+      return NextResponse.json(
+        { error: "Account is not active" },
+        { status: 403 }
+      );
+    }
 
-    // Delete any old OTP for the user (prevent duplicates) and create new one in a transaction
-    await prisma.$transaction(async (tx) => {
-      await tx.otpRequest.deleteMany({ where: { userId: user.id } });
+    // Verify password
+    const passwordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordValid) {
+      return NextResponse.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
+    }
 
-      await tx.otpRequest.create({
-        data: {
-          userId: user.id,
-          otpHash,
-          expiresAt,
-          attempts: 0,
-          lastSentAt: now,
+    // Rate limit by user ID
+    const userRateLimit = checkRateLimit(
+      `otp-request-user:${user.id}`,
+      RATE_LIMITS.OTP_REQUEST
+    );
+
+    if (!userRateLimit.allowed) {
+      const waitMinutes = Math.ceil(
+        (userRateLimit.resetAt - Date.now()) / 60000
+      );
+      return NextResponse.json(
+        {
+          error: `Too many OTP requests. Please try again in ${waitMinutes} minutes.`,
         },
-      });
+        { status: 429 }
+      );
+    }
+
+    // Check cooldown for this user
+    const canRequest = await canRequestOTP({
+      userId: user.id,
+      cooldownSeconds: 60,
+    });
+    if (!canRequest.allowed) {
+      return NextResponse.json(
+        {
+          error: `Please wait ${canRequest.waitSeconds} seconds before requesting another OTP.`,
+        },
+        { status: 429 }
+      );
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+
+    // Store OTP in database
+    await createOtpRequest({
+      userId: user.id,
+      otp,
+      expiryMinutes: 10,
     });
 
-    // Prepare email content (simple transactional HTML)
-    const subject = "Your HospitalManage OTP";
-    const html = /* html */ `
-      <div style="font-family: system-ui, -apple-system, Roboto, 'Segoe UI', 'Helvetica Neue', Arial; line-height:1.4; color:#111;">
-        <h2 style="margin:0 0 8px 0">Your one-time code</h2>
-        <p style="margin:0 0 12px 0">Use the code below to complete your login. This code will expire in ${OTP_EXPIRES_MINUTES} minutes.</p>
-        <div style="padding:12px 18px; display:inline-block; background:#f7f7f8; border-radius:6px; font-weight:700; font-size:20px; letter-spacing:4px;">
-          ${otpString}
-        </div>
-        <p style="margin-top:16px;color:#666;font-size:13px">If you did not request this, please ignore this email.</p>
-      </div>
-    `;
+    // Log auth event
+    await logAuthEvent({
+      userId: user.id,
+      action: "otp_requested_email",
+      ipAddress,
+      userAgent,
+      details: { method: "email", email: validatedEmail },
+    });
 
-    // Send email via MSG91
-    const sendResult = await sendEmailViaMsg91(normalizedEmail, subject, html);
+    // Send OTP via email
+    const emailResult = await sendEmailViaMsg91(
+      validatedEmail,
+      "Your Login OTP",
+      `
+        <html>
+          <body>
+            <h2>Your Login OTP</h2>
+            <p>Your One-Time Password (OTP) is: <strong>${otp}</strong></p>
+            <p>This OTP is valid for 10 minutes.</p>
+            <p>If you didn't request this, please ignore this email.</p>
+          </body>
+        </html>
+      `
+    );
 
-    if (!sendResult.ok) {
-      // Sending failed — remove OTP row (so user isn't left with a dangling OTP)
-      try {
-        await prisma.otpRequest.deleteMany({ where: { userId: user.id } });
-      } catch (e) {
-        // best-effort: if deletion fails, continue
-        console.error("Failed to delete OTP after send failure:", e);
-      }
-
-      // Log the failure in AuthLog
-      const userAgent = sanitizeForLog(req.headers.get("user-agent"), 500);
-      const ipAddress = extractIpAddress(req.headers);
-      const parser = new UAParser(userAgent || "");
-      const uaResult = parser.getResult();
-      const browser = uaResult.browser.name ? sanitizeForLog(`${uaResult.browser.name}${uaResult.browser.version ? " " + uaResult.browser.version : ""}`, 100) : undefined;
-      const os = uaResult.os.name ? sanitizeForLog(`${uaResult.os.name}${uaResult.os.version ? " " + uaResult.os.version : ""}`, 100) : undefined;
-      const deviceType = uaResult.device.type || "desktop";
-
-      try {
-        await prisma.authLog.create({
-          data: {
-            userId: user.id,
-            action: "OTP_SEND_FAILED_EMAIL",
-            ipAddress,
-            userAgent,
-            browser,
-            os,
-            deviceType,
-            details: { reason: sendResult.text || "unknown" },
-          },
-        });
-      } catch (e) {
-        console.error("Failed to create authLog for OTP_SEND_FAILED_EMAIL:", e);
-      }
-
-      return NextResponse.json({ error: "otp_failed", message: "Failed to send OTP via email" }, { status: 502 });
+    if (!emailResult.ok) {
+      console.error("[Email Send Error]", emailResult.text);
+      // Don't fail the request, OTP is already saved
     }
 
-    // Log OTP request success
-    {
-      const userAgent = sanitizeForLog(req.headers.get("user-agent"), 500);
-      const ipAddress = extractIpAddress(req.headers);
-      const parser = new UAParser(userAgent || "");
-      const uaResult = parser.getResult();
-      const browser = uaResult.browser.name ? sanitizeForLog(`${uaResult.browser.name}${uaResult.browser.version ? " " + uaResult.browser.version : ""}`, 100) : undefined;
-      const os = uaResult.os.name ? sanitizeForLog(`${uaResult.os.name}${uaResult.os.version ? " " + uaResult.os.version : ""}`, 100) : undefined;
-      const deviceType = uaResult.device.type || "desktop";
+    return NextResponse.json(
+      {
+        message: "OTP sent to your email address. Please check your inbox.",
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("[OTP Request Email Error]", error);
 
-      try {
-        await prisma.authLog.create({
-          data: {
-            userId: user.id,
-            action: "OTP_REQUESTED_EMAIL",
-            ipAddress,
-            userAgent,
-            browser,
-            os,
-            deviceType,
-            details: { method: "email", expiresAt: expiresAt.toISOString() },
-          },
-        });
-      } catch (e) {
-        console.error("Failed to create authLog for OTP_REQUESTED_EMAIL:", e);
-      }
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: error.issues[0]?.message || "Invalid input" },
+        { status: 400 }
+      );
     }
 
-    return NextResponse.json({ success: true, message: "otp_sent" });
-  } catch (err) {
-    console.error("Email OTP request error:", err instanceof Error ? err.message : err);
-    return NextResponse.json({ error: "server_error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to process OTP request. Please try again." },
+      { status: 500 }
+    );
   }
 }

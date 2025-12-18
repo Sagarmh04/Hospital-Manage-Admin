@@ -1,59 +1,45 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { verifySession } from "@/lib/session-verifier";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getUserBySessionId, getUserSessions } from "@/lib/session-management";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const cookieStore = await cookies();
     const currentSessionId = cookieStore.get("session_id")?.value;
 
-    const result = await verifySession(currentSessionId);
-
-    if (!result.valid) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
+    if (!currentSessionId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const user = result.user;
-    const validSessionId = currentSessionId;
+    // Get user from session
+    const user = await getUserBySessionId(currentSessionId);
 
-    // Get all non-expired sessions for the user
-    const sessions = await prisma.session.findMany({
-      where: {
-        userId: user.id,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: {
-        lastActivityAt: "desc",
-      },
-      select: {
-        id: true,
-        createdAt: true,
-        expiresAt: true,
-        lastActivityAt: true,
-        ipAddress: true,
-        userAgent: true,
-        browser: true,
-        os: true,
-        deviceType: true,
-      },
-    });
+    if (!user) {
+      return NextResponse.json({ error: "Invalid session" }, { status: 401 });
+    }
+
+    // Get all active sessions for the user
+    const sessions = await getUserSessions(user.id);
 
     // Mark which session is the current one
     const sessionsWithCurrent = sessions.map((session) => ({
-      ...session,
-      isCurrent: session.id === validSessionId,
+      id: session.id,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      lastActivityAt: session.lastActivityAt,
+      ipAddress: session.ipAddress,
+      userAgent: session.userAgent,
+      browser: session.browser,
+      os: session.os,
+      deviceType: session.deviceType,
+      isCurrent: session.id === currentSessionId,
     }));
 
     return NextResponse.json({ sessions: sessionsWithCurrent });
-  } catch (err) {
-    // Log error without exposing details
-    console.error("Get sessions error:", err instanceof Error ? err.message : "Unknown error");
+  } catch (error) {
+    console.error("[User Sessions Error]", error);
     return NextResponse.json(
-      { error: "Server error" },
+      { error: "Failed to fetch sessions" },
       { status: 500 }
     );
   }

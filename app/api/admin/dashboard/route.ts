@@ -1,31 +1,32 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { verifySession } from "@/lib/session-verifier";
+import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { getUserBySessionId, getUserSessions } from "@/lib/session-management";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const cookieStore = await cookies();
     const sessionId = cookieStore.get("session_id")?.value;
 
-    const result = await verifySession(sessionId);
-
-    if (!result.valid) {
+    if (!sessionId) {
       return NextResponse.json(
         { error: "Unauthorized", redirect: "/login" },
         { status: 401 }
       );
     }
 
-    const user = result.user;
+    // Get user from session
+    const user = await getUserBySessionId(sessionId);
+
+    if (!user) {
+      return NextResponse.json(
+        { error: "Invalid session", redirect: "/login" },
+        { status: 401 }
+      );
+    }
 
     // Get active sessions count
-    const activeSessions = await prisma.session.count({
-      where: {
-        userId: user.id,
-        expiresAt: { gt: new Date() },
-      },
-    });
+    const sessions = await getUserSessions(user.id);
+    const activeSessions = sessions.length;
 
     // Placeholder stats - these will be replaced with real data later
     const stats = {
@@ -39,6 +40,7 @@ export async function GET() {
       user: {
         id: user.id,
         email: user.email,
+        name: user.name,
         role: user.role,
       },
       activeSessions,

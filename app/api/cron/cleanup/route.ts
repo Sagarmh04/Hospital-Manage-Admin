@@ -1,117 +1,38 @@
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { NextRequest, NextResponse } from "next/server";
+import { cleanupExpiredSessions } from "@/lib/session-management";
+import { cleanupExpiredOtpRequests } from "@/lib/otp-management";
 
-export async function GET(req: Request) {
+/**
+ * Cron endpoint to clean up expired sessions and OTP requests
+ * Should be called periodically (e.g., every hour)
+ * In production, use Vercel Cron or similar service
+ */
+export async function GET(request: NextRequest) {
   try {
-    // Check for Vercel Cron Secret to prevent external abuse
-    const authHeader = req.headers.get('authorization');
-    const expectedAuth = process.env.CRON_SECRET ? `Bearer ${process.env.CRON_SECRET}` : null;
-    
-    if (!expectedAuth || authHeader !== expectedAuth) {
+    // Verify authorization (in production, use a secret token)
+    const authHeader = request.headers.get("authorization");
+    const cronSecret = process.env.CRON_SECRET || "CRON_SECRET_PLACEHOLDER";
+
+    if (authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const now = new Date();
-    
-    // Validate current time is reasonable (not in past or too far future)
-    if (isNaN(now.getTime())) {
-      return NextResponse.json({ error: "Invalid system time" }, { status: 500 });
-    }
-    
-    // Find and process expired sessions in transaction with bulk operations
-    const result = await prisma.$transaction(async (tx) => {
-      // Find all expired sessions
-      const expiredSessions = await tx.session.findMany({
-        where: {
-          expiresAt: { lt: now },
-        },
-      });
+    // Clean up expired sessions
+    const expiredSessionsCount = await cleanupExpiredSessions();
 
-      let deletedCount = 0;
+    // Clean up expired OTP requests
+    const expiredOtpCount = await cleanupExpiredOtpRequests();
 
-      if (expiredSessions.length > 0) {
-        // 1) Bulk insert SessionLog entries
-        await tx.sessionLog.createMany({
-          data: expiredSessions.map((s) => ({
-            sessionId: s.id,
-            userId: s.userId,
-            createdAt: s.createdAt,
-            expiredAt: now,
-            ipAddress: s.ipAddress,
-            userAgent: s.userAgent,
-            browser: s.browser,
-            os: s.os,
-            deviceType: s.deviceType,
-          })),
-        });
-
-        // 2) Bulk insert AuthLog entries with action SESSION_EXPIRED
-        await tx.authLog.createMany({
-          data: expiredSessions.map((s) => ({
-            userId: s.userId,
-            sessionId: s.id,
-            action: "SESSION_EXPIRED",
-            ipAddress: s.ipAddress,
-            userAgent: s.userAgent,
-            browser: s.browser,
-            os: s.os,
-            deviceType: s.deviceType,
-            timestamp: now,
-          })),
-        });
-
-        // 3) Bulk delete expired sessions
-        const deleteResult = await tx.session.deleteMany({
-          where: {
-            id: { in: expiredSessions.map((s) => s.id) },
-          },
-        });
-
-        deletedCount = deleteResult.count;
-      }
-
-      // 4) Log retention - delete logs older than 180 days
-      const cutoff = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
-
-      // Validate cutoff is in the past and reasonable
-      if (cutoff >= now || isNaN(cutoff.getTime())) {
-        throw new Error("Invalid retention cutoff date");
-      }
-
-      // Delete old SessionLog entries (where expiredAt OR revokedAt is older than cutoff)
-      // This ensures we only delete logs that are definitively old
-      const sessionLogsDeleted = await tx.sessionLog.deleteMany({
-        where: {
-          OR: [
-            { expiredAt: { not: null, lt: cutoff } },
-            { revokedAt: { not: null, lt: cutoff } },
-          ],
-        },
-      });
-
-      // Delete old AuthLog entries
-      const authLogsDeleted = await tx.authLog.deleteMany({
-        where: {
-          timestamp: { lt: cutoff },
-        },
-      });
-
-      return {
-        sessionsDeleted: deletedCount,
-        sessionLogsDeleted: sessionLogsDeleted.count,
-        authLogsDeleted: authLogsDeleted.count,
-      };
-    });
-
-    return NextResponse.json({ 
-      deleted: result.sessionsDeleted,
-      sessionLogsDeleted: result.sessionLogsDeleted,
-      authLogsDeleted: result.authLogsDeleted,
-      success: true 
+    return NextResponse.json({
+      success: true,
+      expiredSessions: expiredSessionsCount,
+      expiredOtpRequests: expiredOtpCount,
     });
   } catch (error) {
-    // Log error without exposing internal details
-    console.error("Cleanup error:", error instanceof Error ? error.message : "Unknown error");
-    return NextResponse.json({ error: "Cleanup failed" }, { status: 500 });
+    console.error("[Cleanup Cron Error]", error);
+    return NextResponse.json(
+      { error: "Failed to cleanup expired data" },
+      { status: 500 }
+    );
   }
 }

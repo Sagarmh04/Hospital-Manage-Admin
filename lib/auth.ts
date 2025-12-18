@@ -1,6 +1,6 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { prisma } from "./db";
+import { getUserBySessionId } from "./session-management";
 import { isValidUUID } from "./validation";
 
 /**
@@ -22,31 +22,10 @@ export const getCurrentUser = cache(async () => {
       return null;
     }
 
-    // Query session with user
-    const session = await prisma.session.findUnique({
-      where: { id: sessionId },
-      include: { user: true },
-    });
+    // Get user by session ID (this also validates the session)
+    const user = await getUserBySessionId(sessionId);
 
-    // Session not found in database
-    if (!session) {
-      return null;
-    }
-
-    const now = new Date();
-
-    // Check if session is expired (do not update lastActivityAt for expired sessions)
-    if (session.expiresAt <= now) {
-      return null;
-    }
-
-    // Session is valid - update lastActivityAt
-    await prisma.session.update({
-      where: { id: session.id },
-      data: { lastActivityAt: now },
-    });
-
-    return session.user;
+    return user;
   } catch (error) {
     console.error("getCurrentUser error:", error);
     return null;

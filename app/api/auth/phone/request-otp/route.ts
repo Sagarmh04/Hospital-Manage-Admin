@@ -1,66 +1,53 @@
-// FILE: app/api/auth/phone/request-otp/route.ts
-
-import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import bcrypt from "bcrypt";
-import { UAParser } from "ua-parser-js";
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/drizzle";
+import { users } from "@/drizzle/schema";
+import { eq } from "drizzle-orm";
+import bcrypt from "bcryptjs";
+import {
+  phoneSchema,
+  sanitizeIpAddress,
+  sanitizeUserAgent,
+  extractIpAddress,
+} from "@/lib/validation";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { createOtpRequest, generateOTP, canRequestOTP } from "@/lib/otp-management";
+import { logAuthEvent } from "@/lib/session-management";
 import { z } from "zod";
-import crypto from "crypto";
-import { sanitizeForLog, extractIpAddress } from "@/lib/validation";
 
-// Dummy hash for timing-safe password verification when user doesn't exist
-const DUMMY_HASH =
-  "$2b$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
-
-// OTP Constants
-const OTP_MIN = 100000;
-const OTP_MAX_EXCLUSIVE = 1000000;
-const OTP_EXPIRES_MINUTES = 5;
-const BACKEND_COOLDOWN_SECONDS = 30;
-const MAX_OTP_ATTEMPTS = 5;
-const BCRYPT_ROUNDS = 10;
-
-// MSG91 Constants (SMS Flow Template)
-const MSG91_AUTH_KEY = process.env.MSG91_AUTH_KEY!;
-const MSG91_SMS_TEMPLATE_ID = process.env.MSG91_SMS_TEMPLATE_ID!;
-const MSG91_SMS_SENDER_ID = process.env.MSG91_SMS_SENDER_ID || "HSPTLN";
-
-// Request schema
 const phoneRequestSchema = z.object({
-  phone: z
-    .string()
-    .regex(/^[0-9]{10}$/, "must be a valid 10-digit phone number"),
+  phone: z.string().min(10).max(15),
   password: z.string().min(1).max(128),
 });
 
-// --------------------------------------------
-// MSG91 SMS via Flow Template
-// --------------------------------------------
-async function sendOtpSms(phone: string, otp: string) {
-  if (!MSG91_AUTH_KEY || !MSG91_SMS_TEMPLATE_ID) {
-    return { ok: false, status: 500, text: "Missing MSG91 credentials" };
+// Dummy hash for timing attack prevention
+const DUMMY_HASH = "$2a$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
+
+/**
+ * Send SMS via MSG91
+ * Uses these env variables:
+ *  - MSG91_AUTH_KEY
+ *  - MSG91_TEMPLATE_ID (optional)
+ */
+async function sendSmsViaMsg91(phone: string, otp: string) {
+  const authKey = process.env.MSG91_AUTH_KEY;
+  const templateId = process.env.MSG91_TEMPLATE_ID;
+
+  if (!authKey) {
+    return { ok: false, status: 500, text: "Missing MSG91_AUTH_KEY" };
   }
 
-  const payload = {
-    template_id: MSG91_SMS_TEMPLATE_ID,
-    sender: MSG91_SMS_SENDER_ID,
-    mobile: `91${phone}`,
-    variables: { otp },
-  };
-
   try {
-    const res = await fetch("https://api.msg91.com/api/v5/flow/", {
+    const url = `https://control.msg91.com/api/v5/otp?template_id=${templateId || ""}&mobile=${phone}&authkey=${authKey}&otp=${otp}`;
+    
+    const res = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        authkey: MSG91_AUTH_KEY,
       },
-      body: JSON.stringify(payload),
     });
 
-    const txt = await res.text().catch(() => "");
-
-    return { ok: res.ok, status: res.status, text: txt };
+    const text = await res.text().catch(() => "");
+    return { ok: res.ok, status: res.status, text };
   } catch (err) {
     return {
       ok: false,
@@ -70,156 +57,161 @@ async function sendOtpSms(phone: string, otp: string) {
   }
 }
 
-export async function POST(req: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body = await req.json();
+    // Extract and sanitize request metadata
+    const ipAddress = sanitizeIpAddress(extractIpAddress(request.headers));
+    const userAgent = sanitizeUserAgent(
+      request.headers.get("user-agent") || undefined
+    );
+
+    // Parse and validate request body
+    const body = await request.json();
     const parse = phoneRequestSchema.safeParse(body);
 
     if (!parse.success) {
-      return NextResponse.json({ error: "invalid_input" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid phone number format" },
+        { status: 400 }
+      );
     }
 
     const { phone, password } = parse.data;
+    const validatedPhone = phoneSchema.parse(phone);
 
-    // Step 1 — Fetch User
-    const user = await prisma.user.findUnique({
-      where: { phone },
-      select: { id: true, passwordHash: true, status: true },
-    });
+    // Rate limiting by IP address
+    if (ipAddress) {
+      const rateLimitResult = checkRateLimit(
+        `otp-request:${ipAddress}`,
+        RATE_LIMITS.OTP_REQUEST
+      );
 
-    // Timing safe fallback
-    if (!user) {
-      await bcrypt.compare(password, DUMMY_HASH);
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    if (user.status === "suspended") {
-      return NextResponse.json({ error: "account_suspended" }, { status: 403 });
-    }
-
-    if (user.status === "deleted") {
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    // Step 2 — Verify Password
-    const passwordValid = await bcrypt.compare(password, user.passwordHash);
-    if (!passwordValid) {
-      return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
-    }
-
-    // Step 3 — Rate Limiting
-    const existingOtp = await prisma.otpRequest.findUnique({
-      where: { userId: user.id },
-      select: { lastSentAt: true },
-    });
-
-    if (existingOtp) {
-      const now = Date.now();
-      const last = new Date(existingOtp.lastSentAt).getTime();
-      const diff = Math.floor((now - last) / 1000);
-
-      if (diff < BACKEND_COOLDOWN_SECONDS) {
+      if (!rateLimitResult.allowed) {
+        const waitMinutes = Math.ceil(
+          (rateLimitResult.resetAt - Date.now()) / 60000
+        );
         return NextResponse.json(
           {
-            error: "too_many_requests",
-            retryAfter: BACKEND_COOLDOWN_SECONDS - diff,
+            error: `Too many OTP requests. Please try again in ${waitMinutes} minutes.`,
           },
           { status: 429 }
         );
       }
     }
 
-    // Step 4 — Generate & Hash OTP
-    const otp = crypto.randomInt(OTP_MIN, OTP_MAX_EXCLUSIVE).toString();
-    const otpHash = await bcrypt.hash(otp, BCRYPT_ROUNDS);
+    // Find user by phone
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.phone, validatedPhone))
+      .limit(1);
 
-    const expiresAt = new Date(Date.now() + OTP_EXPIRES_MINUTES * 60 * 1000);
-
-    // Step 5 — Replace existing OTP and insert new one
-    await prisma.$transaction(async (tx) => {
-      await tx.otpRequest.deleteMany({ where: { userId: user.id } });
-      await tx.otpRequest.create({
-        data: {
-          userId: user.id,
-          otpHash,
-          expiresAt,
-          attempts: 0,
-          lastSentAt: new Date(),
-        },
-      });
-    });
-
-    // Step 6 — Send OTP via MSG91 SMS
-    const sendRes = await sendOtpSms(phone, otp);
-
-    if (!sendRes.ok) {
-      // Delete OTP on SMS failure
-      await prisma.otpRequest.deleteMany({ where: { userId: user.id } });
-
-      // Log OTP failure
-      const userAgent = sanitizeForLog(req.headers.get("user-agent"), 500);
-      const ipAddress = extractIpAddress(req.headers);
-      const parser = new UAParser(userAgent || "");
-      const ua = parser.getResult();
-
-      try {
-        await prisma.authLog.create({
-          data: {
-            userId: user.id,
-            action: "OTP_SEND_FAILED_SMS",
-            ipAddress,
-            userAgent,
-            browser:
-              ua.browser.name +
-              (ua.browser.version ? " " + ua.browser.version : ""),
-            os: ua.os.name + (ua.os.version ? " " + ua.os.version : ""),
-            deviceType: ua.device.type || "desktop",
-            details: { reason: sendRes.text || "unknown" },
-          },
-        });
-      } catch (e) {
-        console.error("Failed to log OTP_SEND_FAILED_SMS:", e);
-      }
-
+    // Always perform bcrypt.compare to prevent timing attacks
+    if (!user) {
+      // Compare with dummy hash to normalize timing
+      await bcrypt.compare(password, DUMMY_HASH);
       return NextResponse.json(
-        { error: "otp_failed", message: "Failed to send OTP via SMS" },
-        { status: 502 }
+        { error: "Invalid credentials" },
+        { status: 401 }
       );
     }
 
-    // Step 7 — Log OTP Request Success
-    {
-      const userAgent = sanitizeForLog(req.headers.get("user-agent"), 500);
-      const ipAddress = extractIpAddress(req.headers);
-      const parser = new UAParser(userAgent || "");
-      const ua = parser.getResult();
-
-      try {
-        await prisma.authLog.create({
-          data: {
-            userId: user.id,
-            action: "OTP_REQUESTED_SMS",
-            ipAddress,
-            userAgent,
-            browser:
-              ua.browser.name +
-              (ua.browser.version ? " " + ua.browser.version : ""),
-            os: ua.os.name + (ua.os.version ? " " + ua.os.version : ""),
-            deviceType: ua.device.type || "desktop",
-            details: {
-              method: "phone",
-              expiresAt: expiresAt.toISOString(),
-            },
-          },
-        });
-      } catch (e) {
-        console.error("Failed to log OTP_REQUESTED_SMS:", e);
-      }
+    // Check if user status is active
+    if (user.status !== "active") {
+      await bcrypt.compare(password, DUMMY_HASH);
+      return NextResponse.json(
+        { error: "Account is not active" },
+        { status: 403 }
+      );
     }
 
-    return NextResponse.json({ success: true, message: "otp_sent" });
-  } catch (err) {
-    console.error("Phone OTP request error:", err);
-    return NextResponse.json({ error: "server_error" }, { status: 500 });
+    // Verify password
+    const passwordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordValid) {
+      return NextResponse.json(
+        { error: "Invalid credentials" },
+        { status: 401 }
+      );
+    }
+
+    // Rate limit by user ID
+    const userRateLimit = checkRateLimit(
+      `otp-request-user:${user.id}`,
+      RATE_LIMITS.OTP_REQUEST
+    );
+
+    if (!userRateLimit.allowed) {
+      const waitMinutes = Math.ceil(
+        (userRateLimit.resetAt - Date.now()) / 60000
+      );
+      return NextResponse.json(
+        {
+          error: `Too many OTP requests. Please try again in ${waitMinutes} minutes.`,
+        },
+        { status: 429 }
+      );
+    }
+
+    // Check cooldown for this user
+    const canRequest = await canRequestOTP({
+      userId: user.id,
+      cooldownSeconds: 60,
+    });
+    if (!canRequest.allowed) {
+      return NextResponse.json(
+        {
+          error: `Please wait ${canRequest.waitSeconds} seconds before requesting another OTP.`,
+        },
+        { status: 429 }
+      );
+    }
+
+    // Generate OTP
+    const otp = generateOTP();
+
+    // Store OTP in database
+    await createOtpRequest({
+      userId: user.id,
+      otp,
+      expiryMinutes: 10,
+    });
+
+    // Log auth event
+    await logAuthEvent({
+      userId: user.id,
+      action: "otp_requested_phone",
+      ipAddress,
+      userAgent,
+      details: { method: "phone", phone: validatedPhone },
+    });
+
+    // Send OTP via SMS
+    const smsResult = await sendSmsViaMsg91(validatedPhone, otp);
+
+    if (!smsResult.ok) {
+      console.error("[SMS Send Error]", smsResult.text);
+      // Don't fail the request, OTP is already saved
+    }
+
+    return NextResponse.json(
+      {
+        message: "OTP sent to your phone number. Please check your messages.",
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error("[OTP Request Phone Error]", error);
+
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: error.issues[0]?.message || "Invalid input" },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      { error: "Failed to process OTP request. Please try again." },
+      { status: 500 }
+    );
   }
 }
