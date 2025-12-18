@@ -72,7 +72,7 @@ export const otpSchema = z
 
 // Session duration validation
 export const sessionDurationSchema = z.enum(["1h", "8h", "24h", "7d"], {
-  errorMap: () => ({ message: "Invalid session duration" }),
+  message: "Invalid session duration",
 });
 
 // Name validation
