@@ -28,6 +28,7 @@ const DUMMY_HASH = "$2a$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS
  *  - MSG91_AUTH_KEY
  *  - MSG91_EMAIL_TEMPLATE_ID
  *  - MSG91_EMAIL_SENDER_EMAIL
+ *  - MSG91_EMAIL_SENDER_NAME
  *  - Hospital_Name
  */
 async function sendEmailViaMsg91(
@@ -42,6 +43,7 @@ async function sendEmailViaMsg91(
   const authKey = process.env.MSG91_AUTH_KEY;
   const templateId = process.env.MSG91_EMAIL_TEMPLATE_ID;
   const senderEmail = process.env.MSG91_EMAIL_SENDER_EMAIL;
+  const senderName = process.env.MSG91_EMAIL_SENDER_NAME || "Hospital Admin";
 
   if (!authKey) {
     return { ok: false, status: 500, text: "Missing MSG91_AUTH_KEY" };
@@ -56,6 +58,9 @@ async function sendEmailViaMsg91(
   // Extract domain from sender email
   const domain = senderEmail.split('@')[1];
 
+  // Fallback for recipient name if empty or undefined
+  const recipientName = toName && toName.trim() ? toName : "User";
+
   try {
     const body = {
       recipients: [
@@ -63,7 +68,7 @@ async function sendEmailViaMsg91(
           to: [
             {
               email: toEmail,
-              name: toName,
+              name: recipientName,
             },
           ],
           variables: templateVariables,
@@ -71,6 +76,7 @@ async function sendEmailViaMsg91(
       ],
       from: {
         email: senderEmail,
+        name: senderName,
       },
       domain: domain,
       template_id: templateId,
