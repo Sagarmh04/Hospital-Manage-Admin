@@ -23,26 +23,27 @@ const emailRequestSchema = z.object({
 const DUMMY_HASH = "$2a$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS";
 
 /**
- * Send transactional email via MSG91 Email API v5 (transactional).
+ * Send transactional email via MSG91 Email API v5 using template.
  * Uses these env variables:
  *  - MSG91_AUTH_KEY
- *  - MSG91_EMAIL_SENDER_EMAIL
- *  - MSG91_EMAIL_SENDER_NAME
+ *  - MSG91_EMAIL_TEMPLATE_ID
  */
 async function sendEmailViaMsg91(
   toEmail: string,
-  subject: string,
-  htmlBody: string
+  templateVariables: {
+    hospital_name: string;
+    user_name: string;
+    otp: string;
+  }
 ) {
   const authKey = process.env.MSG91_AUTH_KEY;
-  const senderEmail = process.env.MSG91_EMAIL_SENDER_EMAIL;
-  const senderName = process.env.MSG91_EMAIL_SENDER_NAME || "";
+  const templateId = process.env.MSG91_EMAIL_TEMPLATE_ID;
 
   if (!authKey) {
     return { ok: false, status: 500, text: "Missing MSG91_AUTH_KEY" };
   }
-  if (!senderEmail) {
-    return { ok: false, status: 500, text: "Missing MSG91_EMAIL_SENDER_EMAIL" };
+  if (!templateId) {
+    return { ok: false, status: 500, text: "Missing MSG91_EMAIL_TEMPLATE_ID" };
   }
 
   try {
@@ -53,10 +54,9 @@ async function sendEmailViaMsg91(
         Authorization: `key ${authKey}`,
       },
       body: JSON.stringify({
-        from: { email: senderEmail, name: senderName },
         to: [{ email: toEmail }],
-        subject,
-        html: htmlBody,
+        template_id: templateId,
+        variables: templateVariables,
       }),
     });
 
@@ -199,20 +199,14 @@ export async function POST(request: NextRequest) {
       details: { method: "email", email: validatedEmail },
     });
 
-    // Send OTP via email
+    // Send OTP via email using MSG91 template
     const emailResult = await sendEmailViaMsg91(
       validatedEmail,
-      "Your Login OTP",
-      `
-        <html>
-          <body>
-            <h2>Your Login OTP</h2>
-            <p>Your One-Time Password (OTP) is: <strong>${otp}</strong></p>
-            <p>This OTP is valid for 10 minutes.</p>
-            <p>If you didn't request this, please ignore this email.</p>
-          </body>
-        </html>
-      `
+      {
+        hospital_name: "Test_Hospital",
+        user_name: user.name,
+        otp: otp,
+      }
     );
 
     if (!emailResult.ok) {
