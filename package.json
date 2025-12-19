@@ -9,6 +9,7 @@
     "drizzle:generate": "drizzle-kit generate",
     "drizzle:push": "drizzle-kit push",
     "drizzle:studio": "drizzle-kit studio",
+    "seed": "bun run seed-admin-users.ts",
     "build": "next build"
   },
   "dependencies": {

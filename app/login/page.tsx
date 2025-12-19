@@ -21,6 +21,7 @@ export default function LoginPage() {
     useState<SessionDuration>("8h");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string | null>(null);
   const [step, setStep] = useState<LoginStep>("identifier");
   const [isDevMode, setIsDevMode] = useState(false);
   const [devOtp, setDevOtp] = useState<string | null>(null);
@@ -40,6 +41,7 @@ export default function LoginPage() {
   async function handleRequestOtp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setDebugInfo(null);
     setIsSubmitting(true);
 
     try {
@@ -73,6 +75,9 @@ export default function LoginPage() {
 
       if (!res.ok) {
         setError(data.error || "Failed to send OTP");
+        if (data.debug) {
+          setDebugInfo(data.debug);
+        }
         return;
       }
 
@@ -86,6 +91,7 @@ export default function LoginPage() {
     } catch (err) {
       console.error(err);
       setError("Server error. Please try again.");
+      setDebugInfo(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -94,6 +100,7 @@ export default function LoginPage() {
   async function handleVerifyOtp(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setDebugInfo(null);
     setIsSubmitting(true);
 
     try {
@@ -118,6 +125,9 @@ export default function LoginPage() {
 
       if (!res.ok) {
         setError(data.error || "Invalid OTP");
+        if (data.debug) {
+          setDebugInfo(data.debug);
+        }
         return;
       }
 
@@ -126,6 +136,7 @@ export default function LoginPage() {
     } catch (err) {
       console.error(err);
       setError("Server error. Please try again.");
+      setDebugInfo(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -136,6 +147,7 @@ export default function LoginPage() {
     setOtp("");
     setDevOtp(null);
     setError(null);
+    setDebugInfo(null);
   }
 
   // Legacy password login (kept for compatibility, remove if not needed)
@@ -246,9 +258,21 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <p className="text-sm text-red-600" role="alert">
-                {error}
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+                {debugInfo && isDevMode && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-xs font-medium text-red-800 mb-1">
+                      🐛 Debug Info:
+                    </p>
+                    <p className="text-xs text-red-700 font-mono break-words">
+                      {debugInfo}
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
 
             <button
@@ -313,9 +337,21 @@ export default function LoginPage() {
             </div>
 
             {error && (
-              <p className="text-sm text-red-600" role="alert">
-                {error}
-              </p>
+              <div className="space-y-2">
+                <p className="text-sm text-red-600" role="alert">
+                  {error}
+                </p>
+                {debugInfo && isDevMode && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-xs font-medium text-red-800 mb-1">
+                      🐛 Debug Info:
+                    </p>
+                    <p className="text-xs text-red-700 font-mono break-words">
+                      {debugInfo}
+                    </p>
+                  </div>
+                )}
+              </div>
             )}
 
             <button

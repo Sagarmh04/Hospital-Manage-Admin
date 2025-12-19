@@ -180,13 +180,22 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: error.issues[0]?.message || "Invalid input" },
+        { 
+          error: error.issues[0]?.message || "Invalid input",
+          details: error.issues,
+        },
         { status: 400 }
       );
     }
 
+    // Return detailed error message for debugging
+    const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+    
     return NextResponse.json(
-      { error: "Failed to verify OTP. Please try again." },
+      { 
+        error: "Failed to verify OTP. Please try again.",
+        debug: process.env.NODE_ENV === "development" ? errorMessage : undefined,
+      },
       { status: 500 }
     );
   }

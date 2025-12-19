@@ -36,6 +36,7 @@ export const users = pgTable("User", {
   status: text("status").default("active").notNull(),
   passwordHash: text("passwordHash").notNull(),
   passwordChangedAt: timestamp("passwordChangedAt", { mode: "date" }).defaultNow().notNull(),
+  isWhatsappActive: boolean("isWhatsappActive").default(false).notNull(),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
 }, (table) => ({
@@ -147,7 +148,7 @@ export const workflowFlags = pgTable("WorkflowFlag", {
 
 export const designationPermissionGroups = pgTable("DesignationPermissionGroup", {
   id: uuid("id").primaryKey().defaultRandom().notNull(),
-  designationId: text("designationId").notNull().references(() => designations.id),
+  designationId: uuid("designationId").notNull().references(() => designations.id),
   permissionGroupId: integer("permissionGroupId").notNull().references(() => permissionGroups.id),
   mode: permissionGroupModeEnum("mode").notNull(),
 }, (table) => ({
@@ -157,8 +158,8 @@ export const designationPermissionGroups = pgTable("DesignationPermissionGroup",
 
 export const designationWorkflowFlags = pgTable("DesignationWorkflowFlag", {
   id: uuid("id").primaryKey().defaultRandom().notNull(),
-  designationId: text("designationId").notNull().references(() => designations.id),
-  flagId: text("flagId").notNull().references(() => workflowFlags.id),
+  designationId: uuid("designationId").notNull().references(() => designations.id),
+  flagId: uuid("flagId").notNull().references(() => workflowFlags.id),
   valueBool: boolean("valueBool"),
   valueText: text("valueText"),
   valueNumber: real("valueNumber"),
@@ -171,8 +172,8 @@ export const designationWorkflowFlags = pgTable("DesignationWorkflowFlag", {
 export const userAssignments = pgTable("UserAssignment", {
   id: uuid("id").primaryKey().defaultRandom().notNull(),
   userId: text("userId").notNull().references(() => users.id),
-  departmentId: text("departmentId").notNull().references(() => departments.id),
-  designationId: text("designationId").notNull().references(() => designations.id),
+  departmentId: uuid("departmentId").notNull().references(() => departments.id),
+  designationId: uuid("designationId").notNull().references(() => designations.id),
   isPrimary: boolean("isPrimary").default(false).notNull(),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
   updatedAt: timestamp("updatedAt", { mode: "date" }).defaultNow().notNull(),
@@ -184,7 +185,7 @@ export const userAssignments = pgTable("UserAssignment", {
 export const userPermissionGroupOverrides = pgTable("UserPermissionGroupOverride", {
   id: uuid("id").primaryKey().defaultRandom().notNull(),
   userId: text("userId").notNull().references(() => users.id),
-  departmentId: text("departmentId").references(() => departments.id),
+  departmentId: uuid("departmentId").references(() => departments.id),
   groupCode: permissionGroupCodeEnum("groupCode").notNull(),
   modeOverride: permissionGroupModeEnum("modeOverride"),
   createdAt: timestamp("createdAt", { mode: "date" }).defaultNow().notNull(),
@@ -197,7 +198,7 @@ export const userPermissionGroupOverrides = pgTable("UserPermissionGroupOverride
 export const userWorkflowFlagOverrides = pgTable("UserWorkflowFlagOverride", {
   id: uuid("id").primaryKey().defaultRandom().notNull(),
   userId: text("userId").notNull().references(() => users.id),
-  flagId: text("flagId").notNull().references(() => workflowFlags.id),
+  flagId: uuid("flagId").notNull().references(() => workflowFlags.id),
   valueBool: boolean("valueBool"),
   valueText: text("valueText"),
   valueNumber: real("valueNumber"),
