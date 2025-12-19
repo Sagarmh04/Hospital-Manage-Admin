@@ -27,9 +27,12 @@ const DUMMY_HASH = "$2a$10$X5nZPJlcqNyZc4vZLHHkA.J8EWvLx3fBK7qGrq6KwP5X2HZLqY5HS
  * Uses these env variables:
  *  - MSG91_AUTH_KEY
  *  - MSG91_EMAIL_TEMPLATE_ID
+ *  - MSG91_EMAIL_SENDER_EMAIL
+ *  - Hospital_Name
  */
 async function sendEmailViaMsg91(
   toEmail: string,
+  toName: string,
   templateVariables: {
     hospital_name: string;
     user_name: string;
@@ -38,6 +41,7 @@ async function sendEmailViaMsg91(
 ) {
   const authKey = process.env.MSG91_AUTH_KEY;
   const templateId = process.env.MSG91_EMAIL_TEMPLATE_ID;
+  const senderEmail = process.env.MSG91_EMAIL_SENDER_EMAIL;
 
   if (!authKey) {
     return { ok: false, status: 500, text: "Missing MSG91_AUTH_KEY" };
@@ -45,19 +49,41 @@ async function sendEmailViaMsg91(
   if (!templateId) {
     return { ok: false, status: 500, text: "Missing MSG91_EMAIL_TEMPLATE_ID" };
   }
+  if (!senderEmail) {
+    return { ok: false, status: 500, text: "Missing MSG91_EMAIL_SENDER_EMAIL" };
+  }
+
+  // Extract domain from sender email
+  const domain = senderEmail.split('@')[1];
 
   try {
-    const res = await fetch("https://api.msg91.com/api/v5/email/send", {
+    const body = {
+      recipients: [
+        {
+          to: [
+            {
+              email: toEmail,
+              name: toName,
+            },
+          ],
+          variables: templateVariables,
+        },
+      ],
+      from: {
+        email: senderEmail,
+      },
+      domain: domain,
+      template_id: templateId,
+    };
+
+    const res = await fetch("https://control.msg91.com/api/v5/email/send", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `key ${authKey}`,
+        Accept: "application/json",
+        authkey: authKey,
       },
-      body: JSON.stringify({
-        to: [{ email: toEmail }],
-        template_id: templateId,
-        variables: templateVariables,
-      }),
+      body: JSON.stringify(body),
     });
 
     const text = await res.text().catch(() => "");
@@ -180,7 +206,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate OTP
+    // Generate 6-digit random OTP
     const otp = generateOTP();
 
     // Store OTP in database
@@ -199,11 +225,15 @@ export async function POST(request: NextRequest) {
       details: { method: "email", email: validatedEmail },
     });
 
+    // Get hospital name from environment
+    const hospitalName = process.env.Hospital_Name || "Hospital";
+
     // Send OTP via email using MSG91 template
     const emailResult = await sendEmailViaMsg91(
       validatedEmail,
+      user.name,
       {
-        hospital_name: "Test_Hospital",
+        hospital_name: hospitalName,
         user_name: user.name,
         otp: otp,
       }
