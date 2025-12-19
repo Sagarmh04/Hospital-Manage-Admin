@@ -50,7 +50,7 @@ export default function LoginPage() {
       }
 
       // Determine endpoint based on dev mode and identifier type
-      const baseUrl = isDevMode ? "/api/dev" : "/api/auth";
+      const baseUrl = isDevMode ? "/api/dev" : "/api/admin/auth";
       const endpoint =
         identifierType === "email"
           ? `${baseUrl}/email/request-otp`
@@ -99,7 +99,7 @@ export default function LoginPage() {
     try {
       const endpoint = isDevMode
         ? "/api/dev/verify-otp"
-        : "/api/auth/verify-otp";
+        : "/api/admin/auth/verify-otp";
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -145,7 +145,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch("/api/admin/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
